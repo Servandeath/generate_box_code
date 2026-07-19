@@ -1,14 +1,13 @@
 ﻿"""
-Отрисовка этикетки короба: штрихкод Code128 + текст кода, где
-последние SEQ_DIGITS_DEFAULT символов (порядковый номер) печатаются
-увеличенным шрифтом относительно остальной части кода - для чтения
-издалека без сканера.
+Отрисовка этикетки короба: штрихкод Code128 (растянут на всю ширину
+этикетки за вычетом отступов) + текст кода, где последние seq_digits
+символов (порядковый номер) печатаются увеличенным шрифтом.
 
-Логика поиска/регистрации кириллического TTF-шрифта позаимствована
-из wb-barcode-gui (тот же паттерн: перебор системных путей Windows/
-Linux/macOS, регистрация в reportlab).
+Шрифт текста кода АВТОМАТИЧЕСКИ подгоняется под доступную ширину
+этикетки - код никогда не вылезает за край, независимо от длины.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import createBarcodeDrawing
 
 PDF_FONT_NAME = "LabelFont"
+SETTINGS_FILE = Path(__file__).with_name("label_settings.json")
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arial.ttf",
@@ -36,17 +36,16 @@ FONT_CANDIDATES = [
 DEFAULT_LABEL_SETTINGS = {
     "label_w_mm": 58,
     "label_h_mm": 40,
+    "margin_mm": 3,
 
-    "barcode_x": 5,
-    "barcode_y": 18,
-    "barcode_w": 48,
-    "barcode_h": 14,
+    "barcode_y": 16,
+    "barcode_h": 18,
 
-    "code_x": 5,
-    "code_y": 6,
-    "code_font_size": 8,
-    "seq_font_size": 16,
+    "code_y": 4,
+    "code_font_size": 9,      # стартовый размер, автоматически уменьшается, если код не влезает
+    "seq_font_size": 18,      # стартовый размер номера, тоже подгоняется пропорционально
     "seq_digits": 3,
+    "min_font_size": 4,       # ниже этого автоподгонка не опускается
 }
 
 
@@ -82,29 +81,75 @@ def register_pdf_font() -> str:
     return "Helvetica"
 
 
-def draw_barcode(c: canvas.Canvas, code: str, x_mm: float, y_mm: float, w_mm: float, h_mm: float):
+def load_label_settings() -> dict:
+    settings = DEFAULT_LABEL_SETTINGS.copy()
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                settings.update(json.load(f))
+        except Exception:
+            pass
+    return settings
+
+
+def save_label_settings(settings: dict) -> None:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int, str, str]:
+    """
+    Подобрать размеры шрифта code_font_size/seq_font_size так, чтобы
+    prefix+seq влезли в доступную ширину этикетки. Уменьшает оба размера
+    пропорционально, пока не влезет, но не ниже min_font_size.
+    """
+    seq_digits = int(settings["seq_digits"])
+    prefix = code[:-seq_digits] if seq_digits > 0 else code
+    seq_part = code[-seq_digits:] if seq_digits > 0 else ""
+
+    available_width = (float(settings["label_w_mm"]) - 2 * float(settings["margin_mm"])) * mm
+
+    code_fs = int(settings["code_font_size"])
+    seq_fs = int(settings["seq_font_size"])
+    min_fs = int(settings["min_font_size"])
+
+    while code_fs > min_fs and seq_fs > min_fs:
+        total_width = (
+            pdfmetrics.stringWidth(prefix, font_name, code_fs)
+            + pdfmetrics.stringWidth(seq_part, font_name, seq_fs)
+        )
+        if total_width <= available_width:
+            break
+        code_fs -= 1
+        seq_fs -= 1
+
+    return code_fs, seq_fs, prefix, seq_part
+
+
+def draw_barcode(c: canvas.Canvas, code: str, settings: dict):
+    margin = float(settings["margin_mm"]) * mm
+    w = (float(settings["label_w_mm"]) * mm) - 2 * margin
+    h = float(settings["barcode_h"]) * mm
+    y = float(settings["barcode_y"]) * mm
+
     drawing = createBarcodeDrawing(
         "Code128",
         value=code,
-        width=w_mm * mm,
-        height=h_mm * mm,
+        width=w,
+        height=h,
         humanReadable=False,
     )
     c.saveState()
-    c.translate(x_mm * mm, y_mm * mm)
+    c.translate(margin, y)
     renderPDF.draw(drawing, c, 0, 0)
     c.restoreState()
 
 
 def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
-    seq_digits = int(settings["seq_digits"])
-    prefix = code[:-seq_digits] if seq_digits > 0 else code
-    seq_part = code[-seq_digits:] if seq_digits > 0 else ""
+    code_fs, seq_fs, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
 
-    x = float(settings["code_x"]) * mm
+    x = float(settings["margin_mm"]) * mm
     y = float(settings["code_y"]) * mm
-    code_fs = int(settings["code_font_size"])
-    seq_fs = int(settings["seq_font_size"])
 
     c.setFont(font_name, code_fs)
     c.drawString(x, y, prefix)
@@ -116,11 +161,7 @@ def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
 
 
 def draw_label(c: canvas.Canvas, code: str, settings: dict, font_name: str):
-    draw_barcode(
-        c, code,
-        float(settings["barcode_x"]), float(settings["barcode_y"]),
-        float(settings["barcode_w"]), float(settings["barcode_h"]),
-    )
+    draw_barcode(c, code, settings)
     draw_code_text(c, code, settings, font_name)
 
 
