@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 
-TEST_CODE_DEFAULT = "MAN_19_07_2026_DE_BS_TFNYZY419"
+TEST_CODE_DEFAULT = "ALF_19_07_2026_DE_BS_TFNYZY419"
 
 
 class LabelSettingsWidget(QWidget):

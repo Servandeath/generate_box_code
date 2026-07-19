@@ -148,3 +148,29 @@ def get_next_seq(conn: sqlite3.Connection, cabinet_id: int) -> int:
         (cabinet_id,),
     ).fetchone()
     return row["max_seq"] + 1
+
+
+def list_history(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    """
+    История всех сгенерированных кодов с человекочитаемыми именами
+    кабинета/сезона/категории (через JOIN, не голые id), новые сверху.
+    """
+    query = """
+        SELECT
+            bc.id,
+            bc.code,
+            bc.seq,
+            bc.created_at,
+            c.name_ru AS cabinet_name,
+            s.name_ru AS season_name,
+            i.name_ru AS item_name
+        FROM box_codes bc
+        JOIN cabinets c ON c.id = bc.cabinet_id
+        JOIN seasons s ON s.id = bc.season_id
+        JOIN item_types i ON i.id = bc.item_id
+        ORDER BY bc.created_at DESC, bc.id DESC
+    """
+    if limit is not None:
+        query += " LIMIT ?"
+        return conn.execute(query, (limit,)).fetchall()
+    return conn.execute(query).fetchall()
