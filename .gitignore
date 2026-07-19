@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 *.db
+build/
+dist/
+*.spec
+build/
+dist/
+*.spec
