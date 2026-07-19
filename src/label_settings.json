@@ -1,0 +1,13 @@
+{
+  "label_w_mm": 58,
+  "label_h_mm": 41,
+  "margin_mm": 4,
+  "barcode_y": 14,
+  "barcode_h": 24,
+  "code_y": 7,
+  "code_font_size": 7,
+  "seq_font_size": 12,
+  "seq_digits": 3,
+  "min_font_size": 6,
+  "show_grid": 1
+}

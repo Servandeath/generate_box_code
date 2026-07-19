@@ -1,10 +1,10 @@
 ﻿"""
-Вкладка "Генератор": выбор кабинета/сезона/категории -> генерация
-и немедленная запись в БД -> кнопки печати PDF-этикеток и экспорта
-в Excel по только что записанному пакету кодов.
-
-Порядковый номер не ограничен сверху - ширина цифр растёт сама
-(см. generate_box_code.py), поэтому отдельного лимита в GUI нет.
+Вкладка "Генератор": слева - выбор кабинета/сезона/категории, генерация,
+таблица кодов (столбец по ширине содержимого, сам блок регулируется
+перетаскиванием сплиттера - и по ширине, и по высоте), экспорт PDF/Excel.
+Справа - превью и настройки этикетки (LabelSettingsWidget).
+Обе колонки внутри QScrollArea - при уменьшении окна появляются
+скроллбары вместо расползания раскладки.
 """
 
 import os
@@ -15,14 +15,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db import list_active, get_next_seq, code_exists, add_box_code
 from generate_box_code import generate_box_code
-from label_render import make_pdf_one_per_page, DEFAULT_LABEL_SETTINGS, register_pdf_font
+from label_render import make_pdf_one_per_page, load_label_settings, register_pdf_font
+from gui.label_settings_widget import LabelSettingsWidget
 
 from openpyxl import Workbook
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
+    QScrollArea, QSplitter, QHeaderView,
 )
+from PySide6.QtCore import Qt
 
 MAX_ATTEMPTS_PER_CODE = 5
 
@@ -34,8 +37,15 @@ class GeneratorTab(QWidget):
         self._last_batch = []
         self._pdf_font_name = register_pdf_font()
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b>Генератор кодов короба</b>"))
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        main_splitter = QSplitter(Qt.Horizontal)
+
+        # ---- левая колонка ----
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.addWidget(QLabel("<b>Генератор кодов короба</b>"))
 
         form = QHBoxLayout()
         self.cabinet_combo = QComboBox()
@@ -53,16 +63,30 @@ class GeneratorTab(QWidget):
         form.addWidget(self.item_combo)
         form.addWidget(QLabel("Кол-во:"))
         form.addWidget(self.qty_spin)
-        layout.addLayout(form)
+        left_layout.addLayout(form)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
-        layout.addWidget(gen_btn)
+        left_layout.addWidget(gen_btn)
+
+        # таблица + кнопки экспорта - в вертикальном сплиттере, чтобы
+        # блок можно было тянуть и по высоте (перетаскиванием), и по
+        # ширине (перетаскиванием главного горизонтального сплиттера)
+        left_splitter = QSplitter(Qt.Vertical)
+
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.addWidget(QLabel("Сгенерированные коды:"))
 
         self.table = QTableWidget(0, 1)
-        self.table.setHorizontalHeaderLabels(["Код короба (записан в БД)"])
-        layout.addWidget(self.table)
+        self.table.setHorizontalHeaderLabels(["Код короба"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        table_layout.addWidget(self.table)
+        left_splitter.addWidget(table_container)
 
+        export_container = QWidget()
+        export_layout = QVBoxLayout(export_container)
         export_row = QHBoxLayout()
         self.pdf_btn = QPushButton("Сохранить этикетки PDF (последний пакет)")
         self.pdf_btn.clicked.connect(self._save_pdf)
@@ -72,7 +96,32 @@ class GeneratorTab(QWidget):
         self.excel_btn.setEnabled(False)
         export_row.addWidget(self.pdf_btn)
         export_row.addWidget(self.excel_btn)
-        layout.addLayout(export_row)
+        export_layout.addLayout(export_row)
+        export_layout.addStretch()
+        left_splitter.addWidget(export_container)
+
+        left_splitter.setStretchFactor(0, 3)
+        left_splitter.setStretchFactor(1, 1)
+
+        left_layout.addWidget(left_splitter)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left_widget)
+
+        # ---- правая колонка ----
+        self.label_settings = LabelSettingsWidget()
+
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setWidget(self.label_settings)
+
+        main_splitter.addWidget(left_scroll)
+        main_splitter.addWidget(right_scroll)
+        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(1, 1)
+
+        outer_layout.addWidget(main_splitter)
 
         self.refresh_lists()
 
@@ -141,6 +190,7 @@ class GeneratorTab(QWidget):
         self.table.setRowCount(start_row + len(codes))
         for i, code in enumerate(codes):
             self.table.setItem(start_row + i, 0, QTableWidgetItem(code))
+        self.table.resizeColumnsToContents()
 
         self._last_batch = codes
         has_batch = len(codes) > 0
@@ -154,7 +204,8 @@ class GeneratorTab(QWidget):
         if not path:
             return
         try:
-            make_pdf_one_per_page(self._last_batch, path, DEFAULT_LABEL_SETTINGS, self._pdf_font_name)
+            settings = load_label_settings()
+            make_pdf_one_per_page(self._last_batch, path, settings, self._pdf_font_name)
             QMessageBox.information(self, "Готово", f"Этикетки сохранены: {path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))

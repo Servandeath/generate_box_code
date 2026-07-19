@@ -3,12 +3,13 @@
 этикетки за вычетом отступов) + текст кода, где последние seq_digits
 символов (порядковый номер) печатаются увеличенным шрифтом.
 
-Шрифт текста кода АВТОМАТИЧЕСКИ подгоняется под доступную ширину
-этикетки - код никогда не вылезает за край, независимо от длины.
+PDF рисуется через reportlab (renderPDF) - надёжный, проверенный путь.
+Превью рисуется через python-barcode (чистый Python, без хрупких
+C-бэкендов вроде renderPM) - визуально то же самое, но не зависит
+от специфики конкретной установки reportlab на машине.
 
-render_preview_image() использует ТУ ЖЕ функцию _fit_font_sizes() и
-ТОТ ЖЕ движок отрисовки штрихкода (reportlab), что и PDF - превью
-и печать гарантированно совпадают.
+Поддерживаются именованные шаблоны настроек (пресеты) - например
+разные размеры этикеток под разные задачи.
 """
 
 import json
@@ -19,11 +20,12 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.graphics import renderPDF, renderPM
+from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import createBarcodeDrawing
 
 PDF_FONT_NAME = "LabelFont"
 SETTINGS_FILE = Path(__file__).with_name("label_settings.json")
+PRESETS_FILE = Path(__file__).with_name("label_presets.json")
 
 POINTS_PER_MM = 2.834645669291339  # 72 pt/inch / 25.4 mm/inch
 
@@ -52,6 +54,8 @@ DEFAULT_LABEL_SETTINGS = {
     "seq_font_size": 18,
     "seq_digits": 3,
     "min_font_size": 4,
+
+    "show_grid": 1,
 }
 
 
@@ -103,6 +107,43 @@ def save_label_settings(settings: dict) -> None:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# Пресеты (именованные шаблоны настроек)
+# ---------------------------------------------------------------------------
+
+def load_presets() -> dict:
+    """Вернуть словарь {имя_пресета: settings}. Пусто, если файла ещё нет."""
+    if PRESETS_FILE.exists():
+        try:
+            with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_preset(name: str, settings: dict) -> None:
+    presets = load_presets()
+    presets[name] = settings
+    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(presets, f, ensure_ascii=False, indent=2)
+
+
+def delete_preset(name: str) -> None:
+    presets = load_presets()
+    presets.pop(name, None)
+    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(presets, f, ensure_ascii=False, indent=2)
+
+
+def list_preset_names() -> list[str]:
+    return sorted(load_presets().keys())
+
+
+# ---------------------------------------------------------------------------
+# Общая логика подгонки шрифта (используется и PDF, и превью)
+# ---------------------------------------------------------------------------
+
 def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int, str, str]:
     seq_digits = int(settings["seq_digits"])
     prefix = code[:-seq_digits] if seq_digits > 0 else code
@@ -126,6 +167,10 @@ def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int
 
     return code_fs, seq_fs, prefix, seq_part
 
+
+# ---------------------------------------------------------------------------
+# PDF (reportlab, проверенный путь - не трогаем)
+# ---------------------------------------------------------------------------
 
 def draw_barcode(c: canvas.Canvas, code: str, settings: dict):
     margin = float(settings["margin_mm"]) * mm
@@ -177,11 +222,39 @@ def make_pdf_one_per_page(codes: list[str], out_path: str | Path, settings: dict
     return Path(out_path)
 
 
+# ---------------------------------------------------------------------------
+# Превью (PIL, через python-barcode - не зависит от renderPM)
+# ---------------------------------------------------------------------------
+
+def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
+    """
+    Отрисовать штрихкод Code128 как PIL.Image заданного размера,
+    используя python-barcode (чистый Python, без C-расширений).
+    """
+    import barcode
+    from barcode.writer import ImageWriter
+    from PIL import Image
+    import io
+
+    code128_cls = barcode.get_barcode_class("code128")
+    writer = ImageWriter()
+    writer.dpi = 300  # высокое разрешение, потом сжимаем resize()-ом до нужного размера
+
+    bc = code128_cls(code, writer=writer)
+    buf = io.BytesIO()
+    bc.write(buf, options={"write_text": False, "quiet_zone": 0, "module_height": 15.0})
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    return img.resize((max(1, w_px), max(1, h_px)))
+
+
 def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: int = 8):
     """
-    Рендер этикетки в PIL.Image для живого превью в GUI. Использует
-    ТОТ ЖЕ _fit_font_sizes() и тот же барcode-движок (reportlab), что
-    и make_pdf_one_per_page - превью гарантированно совпадает с печатью.
+    Рендер этикетки в PIL.Image для живого превью в GUI. Текст кода
+    использует ТУ ЖЕ _fit_font_sizes(), что и PDF - позиции/пропорции
+    текста совпадают. Штрихкод рисуется через python-barcode - визуально
+    эквивалентен PDF-версии (Code128), но не зависит от renderPM.
+    Рисует миллиметровую сетку с подписями (шаг 5 мм), если show_grid=1.
     """
     from PIL import Image, ImageDraw, ImageFont
 
@@ -190,36 +263,60 @@ def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: i
 
     img = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(img)
+
+    label_w_mm = float(settings["label_w_mm"])
+    label_h_mm = float(settings["label_h_mm"])
+
+    if int(settings.get("show_grid", 1)):
+        try:
+            axis_font = ImageFont.truetype(FONT_PATH, 9) if FONT_PATH else ImageFont.load_default()
+        except Exception:
+            axis_font = ImageFont.load_default()
+
+        gx = 0
+        while gx <= label_w_mm:
+            px = gx * px_per_mm
+            draw.line([(px, 0), (px, H)], fill=(225, 225, 235), width=1)
+            gx += 5
+        gy = 0
+        while gy <= label_h_mm:
+            py = H - gy * px_per_mm
+            draw.line([(0, py), (W, py)], fill=(225, 225, 235), width=1)
+            gy += 5
+
+        gx = 0
+        while gx <= label_w_mm:
+            draw.text((gx * px_per_mm + 1, 1), str(int(gx)), fill=(150, 150, 170), font=axis_font)
+            gx += 10
+        gy = 10
+        while gy <= label_h_mm:
+            draw.text((1, H - gy * px_per_mm + 1), str(int(gy)), fill=(150, 150, 170), font=axis_font)
+            gy += 10
+
     draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(0, 0, 0), width=2)
 
-    # --- штрихкод: рендерим через reportlab renderPM в PIL, вставляем ---
+    # --- штрихкод ---
     margin_px = float(settings["margin_mm"]) * px_per_mm
     bw_px = W - 2 * margin_px
     bh_px = float(settings["barcode_h"]) * px_per_mm
+    y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
 
     if bw_px > 0 and bh_px > 0:
-        dpi = px_per_mm * 25.4
-        drawing = createBarcodeDrawing(
-            "Code128",
-            value=code,
-            width=bw_px * POINTS_PER_MM / px_per_mm,  # points, соответствующие bw_px при данном dpi
-            height=bh_px * POINTS_PER_MM / px_per_mm,
-            humanReadable=False,
-        )
         try:
-            bc_img = renderPM.drawToPIL(drawing, dpi=dpi)
-            bc_img = bc_img.resize((max(1, int(bw_px)), max(1, int(bh_px))))
-            y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
+            bc_img = _render_barcode_bars_pil(code, int(bw_px), int(bh_px))
             img.paste(bc_img, (int(margin_px), int(y_top_px)))
-        except Exception:
-            # если renderPM недоступен в окружении - рисуем красную рамку-заглушку
-            y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
+        except Exception as e:
             draw.rectangle(
                 [(margin_px, y_top_px), (margin_px + bw_px, y_top_px + bh_px)],
                 outline=(200, 0, 0), width=2,
             )
+            try:
+                err_font = ImageFont.truetype(FONT_PATH, 9) if FONT_PATH else ImageFont.load_default()
+            except Exception:
+                err_font = ImageFont.load_default()
+            draw.text((margin_px + 2, y_top_px + 2), f"Ошибка ШК: {e}", fill=(200, 0, 0), font=err_font)
 
-    # --- текст кода: тот же _fit_font_sizes(), что и в PDF ---
+    # --- текст кода ---
     code_fs_pt, seq_fs_pt, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
     pt_to_px = px_per_mm / POINTS_PER_MM
 

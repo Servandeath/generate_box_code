@@ -3,3 +3,4 @@ reportlab
 pillow
 PySide6
 pytest
+python-barcode
