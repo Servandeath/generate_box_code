@@ -12,6 +12,7 @@ from db import (
     list_active,
     add_box_code,
     code_exists,
+    get_next_seq,
 )
 
 
@@ -64,7 +65,7 @@ def test_add_box_code_and_check_exists(conn):
     add_box_code(conn, code, cab_id, season_id, item_id, 1)
 
     assert code_exists(conn, code) is True
-    assert code_exists(conn, code.lower()) is True  # регистронезависимо
+    assert code_exists(conn, code.lower()) is True
     assert code_exists(conn, "NOT_A_REAL_CODE") is False
 
 
@@ -78,3 +79,31 @@ def test_duplicate_code_case_insensitive_raises(conn):
 
     with pytest.raises(sqlite3.IntegrityError):
         add_box_code(conn, code.lower(), cab_id, season_id, item_id, 2)
+
+
+def test_get_next_seq_starts_at_one(conn):
+    cab_id = add_reference(conn, "cabinets", "Мани", "MAN")
+    assert get_next_seq(conn, cab_id) == 1
+
+
+def test_get_next_seq_increments_after_codes_added(conn):
+    cab_id = add_reference(conn, "cabinets", "Мани", "MAN")
+    season_id = add_reference(conn, "seasons", "Демисезон", "DE")
+    item_id = add_reference(conn, "item_types", "Ботфорты", "BT")
+
+    add_box_code(conn, "MAN_16_07_2026_DE_BT_AAA001", cab_id, season_id, item_id, 1)
+    add_box_code(conn, "MAN_16_07_2026_DE_BT_BBB002", cab_id, season_id, item_id, 2)
+
+    assert get_next_seq(conn, cab_id) == 3
+
+
+def test_get_next_seq_independent_per_cabinet(conn):
+    cab1 = add_reference(conn, "cabinets", "Мани", "MAN")
+    cab2 = add_reference(conn, "cabinets", "Мирос", "MIR")
+    season_id = add_reference(conn, "seasons", "Демисезон", "DE")
+    item_id = add_reference(conn, "item_types", "Ботфорты", "BT")
+
+    add_box_code(conn, "MAN_16_07_2026_DE_BT_AAA001", cab1, season_id, item_id, 1)
+
+    assert get_next_seq(conn, cab1) == 2
+    assert get_next_seq(conn, cab2) == 1  # у другого кабинета свой счётчик

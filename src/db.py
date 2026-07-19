@@ -131,3 +131,20 @@ def code_exists(conn: sqlite3.Connection, code: str) -> bool:
         "SELECT 1 FROM box_codes WHERE code = ? COLLATE NOCASE", (code,)
     ).fetchone()
     return row is not None
+
+
+def get_next_seq(conn: sqlite3.Connection, cabinet_id: int) -> int:
+    """
+    Следующий свободный порядковый номер для кабинета за СЕГОДНЯ.
+    Счётчик общий на кабинет за сутки (не зависит от сезона/категории),
+    сбрасывается на новый день автоматически - т.к. считается по дате
+    записи created_at, а не по отдельному хранимому счётчику.
+    """
+    row = conn.execute(
+        """SELECT COALESCE(MAX(seq), 0) AS max_seq
+           FROM box_codes
+           WHERE cabinet_id = ?
+             AND date(created_at) = date('now')""",
+        (cabinet_id,),
+    ).fetchone()
+    return row["max_seq"] + 1
