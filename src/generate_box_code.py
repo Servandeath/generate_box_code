@@ -3,6 +3,10 @@
 
 Формат: CABINET_dd_MM_YYYY_SEASON_ITEM_RANDOMSEQ
 RANDOMSEQ = случайные символы + порядковый номер, без разделителя.
+
+Порядковый номер не ограничен сверху - ширина (кол-во цифр) считается
+динамически под ТЕКУЩЕЕ значение seq (минимум 3 цифры, растёт по мере
+роста номера: 001..999, затем 1000, 1001...).
 """
 
 import random
@@ -14,7 +18,7 @@ MIN_CODE_LENGTH = 6
 MAX_CODE_LENGTH = 30
 MIN_RANDOM_CHARS = 3
 SEQ_MIN = 1
-DEFAULT_MAX_SEQ = 300
+MIN_SEQ_DIGITS = 3  # минимальная ширина номера, даже если seq однозначный (001, не 1)
 
 CABINET_CODE_LEN = 3
 SEASON_CODE_LEN = 2
@@ -33,13 +37,22 @@ def generate_box_code(
     season: str,
     item: str,
     seq: int,
-    max_seq: int = DEFAULT_MAX_SEQ,
     gen_date: date | None = None,
 ) -> str:
-    if max_seq < SEQ_MIN:
-        raise ValueError(f"max_seq должен быть >= {SEQ_MIN}, получено {max_seq}")
-    if not (SEQ_MIN <= seq <= max_seq):
-        raise ValueError(f"seq должен быть в диапазоне {SEQ_MIN}-{max_seq}, получено {seq}")
+    """
+    Собирает код короба по формату:
+    CABINET_dd_MM_YYYY_SEASON_ITEM_RANDOMSEQ
+
+    seq не ограничен сверху. Ширина номера = max(MIN_SEQ_DIGITS, len(str(seq))),
+    т.е. растёт сама по мере роста номера, не требуя заранее заданного лимита.
+
+    Бросает ValueError, если seq < 1, входные коды содержат недопустимые
+    символы, или не остаётся места на случайную часть (например, если
+    кабинет/сезон/предмет слишком длинные, либо seq стал настолько большим,
+    что съел весь бюджет длины кода).
+    """
+    if seq < SEQ_MIN:
+        raise ValueError(f"seq должен быть >= {SEQ_MIN}, получено {seq}")
 
     for name, value in [("cabinet", cabinet), ("season", season), ("item", item)]:
         if not value or not _VALID_CHARS_RE.match(value):
@@ -48,7 +61,7 @@ def generate_box_code(
     gen_date = gen_date or date.today()
     date_part = gen_date.strftime("%d_%m_%Y")
 
-    seq_digits = len(str(max_seq))
+    seq_digits = max(MIN_SEQ_DIGITS, len(str(seq)))
     seq_part = str(seq).zfill(seq_digits)
 
     fixed_len = len(cabinet) + len(date_part) + len(season) + len(item) + seq_digits + 4
@@ -57,7 +70,8 @@ def generate_box_code(
     if random_budget < MIN_RANDOM_CHARS:
         raise ValueError(
             f"Не хватает места под случайную часть: доступно {random_budget}, "
-            f"минимум {MIN_RANDOM_CHARS}. Сократите cabinet/season/item или max_seq."
+            f"минимум {MIN_RANDOM_CHARS}. Сократите cabinet/season/item, "
+            f"либо номер {seq} стал слишком большим для формата."
         )
 
     code = f"{cabinet}_{date_part}_{season}_{item}_{_random_chars(random_budget)}{seq_part}"

@@ -15,19 +15,24 @@ def test_basic_format():
     assert code.endswith("001")
 
 
-def test_seq_boundaries_default_max():
-    generate_box_code("MAN", "DE", "BT", 300, gen_date=FIXED_DATE)
-    with pytest.raises(ValueError):
-        generate_box_code("MAN", "DE", "BT", 301, gen_date=FIXED_DATE)
+def test_seq_below_min_raises():
     with pytest.raises(ValueError):
         generate_box_code("MAN", "DE", "BT", 0, gen_date=FIXED_DATE)
 
 
-def test_max_seq_1000_uses_more_digits():
-    code = generate_box_code("MAN", "DE", "BT", 1000, max_seq=1000, gen_date=FIXED_DATE)
-    assert code.endswith("1000")
+def test_no_upper_limit_seq_grows_digits():
+    code_small = generate_box_code("MAN", "DE", "BT", 5, gen_date=FIXED_DATE)
+    assert code_small.endswith("005")  # 3 цифры минимум
+
+    code_big = generate_box_code("MAN", "DE", "BT", 1234, gen_date=FIXED_DATE)
+    assert code_big.endswith("1234")  # ширина выросла сама
+
+
+def test_very_large_seq_eventually_raises_no_budget():
+    # seq с 20 цифрами точно не оставит места под кабинет+дату+сезон+предмет+рандом
+    huge_seq = 10**20
     with pytest.raises(ValueError):
-        generate_box_code("MAN", "DE", "BT", 1001, max_seq=1000, gen_date=FIXED_DATE)
+        generate_box_code("MAN", "DE", "BT", huge_seq, gen_date=FIXED_DATE)
 
 
 def test_all_three_cabinets_fit():
