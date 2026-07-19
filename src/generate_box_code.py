@@ -3,13 +3,6 @@
 
 Формат: CABINET_dd_MM_YYYY_SEASON_ITEM_RANDOMSEQ
 RANDOMSEQ = случайные символы + порядковый номер, без разделителя.
-
-Требования WB к коду:
-- длина 6-30 символов
-- не начинается с "WB"
-- без пробелов
-- только латинские буквы, цифры, "-", "_"
-- уникальность регистронезависимая (проверяется на уровне БД, не здесь)
 """
 
 import random
@@ -19,9 +12,13 @@ from datetime import date
 
 MIN_CODE_LENGTH = 6
 MAX_CODE_LENGTH = 30
-MIN_RANDOM_CHARS = 3  # минимальный запас энтропии, ниже не опускаемся
+MIN_RANDOM_CHARS = 3
 SEQ_MIN = 1
 DEFAULT_MAX_SEQ = 300
+
+CABINET_CODE_LEN = 3
+SEASON_CODE_LEN = 2
+ITEM_CODE_LEN = 2
 
 RANDOM_ALPHABET = string.ascii_uppercase + string.digits
 _VALID_CHARS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -39,17 +36,6 @@ def generate_box_code(
     max_seq: int = DEFAULT_MAX_SEQ,
     gen_date: date | None = None,
 ) -> str:
-    """
-    Собирает код короба по формату:
-    CABINET_dd_MM_YYYY_SEASON_ITEM_RANDOMSEQ
-
-    max_seq задаёт верхнюю границу порядкового номера на сутки для
-    кабинета; число цифр номера вычисляется как len(str(max_seq))
-    и влияет на бюджет случайной части.
-
-    Бросает ValueError, если seq вне диапазона, входные коды содержат
-    недопустимые символы, или не остаётся места на случайную часть.
-    """
     if max_seq < SEQ_MIN:
         raise ValueError(f"max_seq должен быть >= {SEQ_MIN}, получено {max_seq}")
     if not (SEQ_MIN <= seq <= max_seq):
@@ -60,12 +46,12 @@ def generate_box_code(
             raise ValueError(f"{name}='{value}' содержит недопустимые символы")
 
     gen_date = gen_date or date.today()
-    date_part = gen_date.strftime("%d_%m_%Y")  # 10 символов
+    date_part = gen_date.strftime("%d_%m_%Y")
 
     seq_digits = len(str(max_seq))
     seq_part = str(seq).zfill(seq_digits)
 
-    fixed_len = len(cabinet) + len(date_part) + len(season) + len(item) + seq_digits + 4  # 4 разделителя "_"
+    fixed_len = len(cabinet) + len(date_part) + len(season) + len(item) + seq_digits + 4
     random_budget = MAX_CODE_LENGTH - fixed_len
 
     if random_budget < MIN_RANDOM_CHARS:
