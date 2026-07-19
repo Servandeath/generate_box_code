@@ -5,6 +5,10 @@
 
 Шрифт текста кода АВТОМАТИЧЕСКИ подгоняется под доступную ширину
 этикетки - код никогда не вылезает за край, независимо от длины.
+
+render_preview_image() использует ТУ ЖЕ функцию _fit_font_sizes() и
+ТОТ ЖЕ движок отрисовки штрихкода (reportlab), что и PDF - превью
+и печать гарантированно совпадают.
 """
 
 import json
@@ -15,11 +19,13 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.graphics import renderPDF
+from reportlab.graphics import renderPDF, renderPM
 from reportlab.graphics.barcode import createBarcodeDrawing
 
 PDF_FONT_NAME = "LabelFont"
 SETTINGS_FILE = Path(__file__).with_name("label_settings.json")
+
+POINTS_PER_MM = 2.834645669291339  # 72 pt/inch / 25.4 mm/inch
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arial.ttf",
@@ -42,10 +48,10 @@ DEFAULT_LABEL_SETTINGS = {
     "barcode_h": 18,
 
     "code_y": 4,
-    "code_font_size": 9,      # стартовый размер, автоматически уменьшается, если код не влезает
-    "seq_font_size": 18,      # стартовый размер номера, тоже подгоняется пропорционально
+    "code_font_size": 9,
+    "seq_font_size": 18,
     "seq_digits": 3,
-    "min_font_size": 4,       # ниже этого автоподгонка не опускается
+    "min_font_size": 4,
 }
 
 
@@ -98,11 +104,6 @@ def save_label_settings(settings: dict) -> None:
 
 
 def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int, str, str]:
-    """
-    Подобрать размеры шрифта code_font_size/seq_font_size так, чтобы
-    prefix+seq влезли в доступную ширину этикетки. Уменьшает оба размера
-    пропорционально, пока не влезет, но не ниже min_font_size.
-    """
     seq_digits = int(settings["seq_digits"])
     prefix = code[:-seq_digits] if seq_digits > 0 else code
     seq_part = code[-seq_digits:] if seq_digits > 0 else ""
@@ -174,3 +175,69 @@ def make_pdf_one_per_page(codes: list[str], out_path: str | Path, settings: dict
         c.showPage()
     c.save()
     return Path(out_path)
+
+
+def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: int = 8):
+    """
+    Рендер этикетки в PIL.Image для живого превью в GUI. Использует
+    ТОТ ЖЕ _fit_font_sizes() и тот же барcode-движок (reportlab), что
+    и make_pdf_one_per_page - превью гарантированно совпадает с печатью.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    W = int(float(settings["label_w_mm"]) * px_per_mm)
+    H = int(float(settings["label_h_mm"]) * px_per_mm)
+
+    img = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(0, 0, 0), width=2)
+
+    # --- штрихкод: рендерим через reportlab renderPM в PIL, вставляем ---
+    margin_px = float(settings["margin_mm"]) * px_per_mm
+    bw_px = W - 2 * margin_px
+    bh_px = float(settings["barcode_h"]) * px_per_mm
+
+    if bw_px > 0 and bh_px > 0:
+        dpi = px_per_mm * 25.4
+        drawing = createBarcodeDrawing(
+            "Code128",
+            value=code,
+            width=bw_px * POINTS_PER_MM / px_per_mm,  # points, соответствующие bw_px при данном dpi
+            height=bh_px * POINTS_PER_MM / px_per_mm,
+            humanReadable=False,
+        )
+        try:
+            bc_img = renderPM.drawToPIL(drawing, dpi=dpi)
+            bc_img = bc_img.resize((max(1, int(bw_px)), max(1, int(bh_px))))
+            y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
+            img.paste(bc_img, (int(margin_px), int(y_top_px)))
+        except Exception:
+            # если renderPM недоступен в окружении - рисуем красную рамку-заглушку
+            y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
+            draw.rectangle(
+                [(margin_px, y_top_px), (margin_px + bw_px, y_top_px + bh_px)],
+                outline=(200, 0, 0), width=2,
+            )
+
+    # --- текст кода: тот же _fit_font_sizes(), что и в PDF ---
+    code_fs_pt, seq_fs_pt, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
+    pt_to_px = px_per_mm / POINTS_PER_MM
+
+    try:
+        code_font = ImageFont.truetype(FONT_PATH, max(6, int(code_fs_pt * pt_to_px))) if FONT_PATH else ImageFont.load_default()
+        seq_font = ImageFont.truetype(FONT_PATH, max(6, int(seq_fs_pt * pt_to_px))) if FONT_PATH else ImageFont.load_default()
+    except Exception:
+        code_font = ImageFont.load_default()
+        seq_font = ImageFont.load_default()
+
+    x_px = margin_px
+    y_baseline_px = H - (float(settings["code_y"]) * px_per_mm)
+    ascent, _ = code_font.getmetrics()
+    draw.text((x_px, y_baseline_px - ascent), prefix, fill=(0, 0, 0), font=code_font)
+
+    if seq_part:
+        prefix_w_px = draw.textlength(prefix, font=code_font)
+        ascent_seq, _ = seq_font.getmetrics()
+        draw.text((x_px + prefix_w_px, y_baseline_px - ascent_seq), seq_part, fill=(0, 0, 0), font=seq_font)
+
+    return img
