@@ -1,0 +1,5 @@
+﻿openpyxl
+reportlab
+pillow
+PySide6
+pytest
