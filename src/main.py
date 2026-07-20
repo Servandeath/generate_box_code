@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from db import init_db, get_connection
 from gui.references_tab import ReferencesTab
 from gui.generator_tab import GeneratorTab
+from gui.history_tab import HistoryTab
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
@@ -28,8 +29,10 @@ class MainWindow(QMainWindow):
 
         self.generator_tab = GeneratorTab(self.conn)
         self.references_tab = ReferencesTab(self.conn)
+        self.history_tab = HistoryTab(self.conn)
 
         self.tabs.addTab(self.generator_tab, "Генератор")
+        self.tabs.addTab(self.history_tab, "История")
         self.tabs.addTab(self.references_tab, "Справочники")
 
         self.tabs.setCurrentWidget(self.generator_tab)
@@ -38,8 +41,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
     def _on_tab_changed(self, index: int):
-        if self.tabs.widget(index) is self.generator_tab:
+        widget = self.tabs.widget(index)
+        if widget is self.generator_tab:
             self.generator_tab.refresh_lists()
+        elif widget is self.history_tab:
+            self.history_tab.refresh()
 
 
 if __name__ == "__main__":

@@ -174,3 +174,9 @@ def list_history(conn: sqlite3.Connection, limit: int | None = None) -> list[sql
         query += " LIMIT ?"
         return conn.execute(query, (limit,)).fetchall()
     return conn.execute(query).fetchall()
+
+
+def count_history(conn: sqlite3.Connection) -> int:
+    """Общее число записей в истории (для отображения 'показано N из M')."""
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM box_codes").fetchone()
+    return row["cnt"]
