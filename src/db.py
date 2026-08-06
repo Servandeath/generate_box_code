@@ -13,7 +13,9 @@
 import sqlite3
 from pathlib import Path
 
-DB_FILE = Path(__file__).with_name("box_codes.db")
+from app_paths import get_app_data_dir
+
+DB_FILE = get_app_data_dir() / "box_codes.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cabinets (
@@ -77,9 +79,9 @@ def add_reference(
     name_ru: str,
     code_latin: str,
 ) -> int:
-    """Добавить запись в справочник (cabinets/seasons/item_types). Возвращает id."""
+    """обавить запись в справочник (cabinets/seasons/item_types). озвращает id."""
     if table not in ("cabinets", "seasons", "item_types"):
-        raise ValueError(f"Неизвестная таблица справочника: {table}")
+        raise ValueError(f"еизвестная таблица справочника: {table}")
     cur = conn.execute(
         f"INSERT INTO {table} (name_ru, code_latin) VALUES (?, ?)",
         (name_ru, code_latin),
@@ -89,16 +91,16 @@ def add_reference(
 
 
 def deactivate_reference(conn: sqlite3.Connection, table: str, ref_id: int) -> None:
-    """Мягкое отключение записи справочника (is_active = 0), история не теряется."""
+    """ягкое отключение записи справочника (is_active = 0), история не теряется."""
     if table not in ("cabinets", "seasons", "item_types"):
-        raise ValueError(f"Неизвестная таблица справочника: {table}")
+        raise ValueError(f"еизвестная таблица справочника: {table}")
     conn.execute(f"UPDATE {table} SET is_active = 0 WHERE id = ?", (ref_id,))
     conn.commit()
 
 
 def list_active(conn: sqlite3.Connection, table: str) -> list[sqlite3.Row]:
     if table not in ("cabinets", "seasons", "item_types"):
-        raise ValueError(f"Неизвестная таблица справочника: {table}")
+        raise ValueError(f"еизвестная таблица справочника: {table}")
     return conn.execute(
         f"SELECT * FROM {table} WHERE is_active = 1 ORDER BY name_ru"
     ).fetchall()
@@ -113,8 +115,8 @@ def add_box_code(
     seq: int,
 ) -> int:
     """
-    Записать сгенерированный код короба в историю.
-    Бросает sqlite3.IntegrityError при регистронезависимом дубликате.
+    аписать сгенерированный код короба в историю.
+    росает sqlite3.IntegrityError при регистронезависимом дубликате.
     """
     cur = conn.execute(
         """INSERT INTO box_codes (code, cabinet_id, season_id, item_id, seq)
@@ -126,7 +128,7 @@ def add_box_code(
 
 
 def code_exists(conn: sqlite3.Connection, code: str) -> bool:
-    """Проверка уникальности кода без попытки вставки (регистронезависимо)."""
+    """роверка уникальности кода без попытки вставки (регистронезависимо)."""
     row = conn.execute(
         "SELECT 1 FROM box_codes WHERE code = ? COLLATE NOCASE", (code,)
     ).fetchone()
@@ -135,7 +137,7 @@ def code_exists(conn: sqlite3.Connection, code: str) -> bool:
 
 def get_next_seq(conn: sqlite3.Connection, cabinet_id: int) -> int:
     """
-    Следующий свободный порядковый номер для кабинета за СЕГОДНЯ.
+    Следующий свободный порядковый номер для кабинета за СЯ.
     Счётчик общий на кабинет за сутки (не зависит от сезона/категории),
     сбрасывается на новый день автоматически - т.к. считается по дате
     записи created_at, а не по отдельному хранимому счётчику.
@@ -152,7 +154,7 @@ def get_next_seq(conn: sqlite3.Connection, cabinet_id: int) -> int:
 
 def list_history(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
     """
-    История всех сгенерированных кодов с человекочитаемыми именами
+    стория всех сгенерированных кодов с человекочитаемыми именами
     кабинета/сезона/категории (через JOIN, не голые id), новые сверху.
     """
     query = """
@@ -177,6 +179,6 @@ def list_history(conn: sqlite3.Connection, limit: int | None = None) -> list[sql
 
 
 def count_history(conn: sqlite3.Connection) -> int:
-    """Общее число записей в истории (для отображения 'показано N из M')."""
+    """бщее число записей в истории (для отображения 'показано N из M')."""
     row = conn.execute("SELECT COUNT(*) AS cnt FROM box_codes").fetchone()
     return row["cnt"]

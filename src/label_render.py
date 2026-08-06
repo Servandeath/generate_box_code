@@ -1,14 +1,14 @@
 ﻿"""
-Отрисовка этикетки короба: штрихкод Code128 (растянут на всю ширину
+трисовка этикетки короба: штрихкод Code128 (растянут на всю ширину
 этикетки за вычетом отступов) + текст кода, где последние seq_digits
 символов (порядковый номер) печатаются увеличенным шрифтом.
 
 PDF рисуется через reportlab (renderPDF) - надёжный, проверенный путь.
-Превью рисуется через python-barcode (чистый Python, без хрупких
+ревью рисуется через python-barcode (чистый Python, без хрупких
 C-бэкендов вроде renderPM) - визуально то же самое, но не зависит
 от специфики конкретной установки reportlab на машине.
 
-Поддерживаются именованные шаблоны настроек (пресеты) - например
+оддерживаются именованные шаблоны настроек (пресеты) - например
 разные размеры этикеток под разные задачи.
 """
 
@@ -23,9 +23,11 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import createBarcodeDrawing
 
+from app_paths import get_app_data_dir
+
 PDF_FONT_NAME = "LabelFont"
-SETTINGS_FILE = Path(__file__).with_name("label_settings.json")
-PRESETS_FILE = Path(__file__).with_name("label_presets.json")
+SETTINGS_FILE = get_app_data_dir() / "label_settings.json"
+PRESETS_FILE = get_app_data_dir() / "label_presets.json"
 
 POINTS_PER_MM = 2.834645669291339  # 72 pt/inch / 25.4 mm/inch
 
@@ -108,11 +110,11 @@ def save_label_settings(settings: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Пресеты (именованные шаблоны настроек)
+# ресеты (именованные шаблоны настроек)
 # ---------------------------------------------------------------------------
 
 def load_presets() -> dict:
-    """Вернуть словарь {имя_пресета: settings}. Пусто, если файла ещё нет."""
+    """ернуть словарь {имя_пресета: settings}. усто, если файла ещё нет."""
     if PRESETS_FILE.exists():
         try:
             with open(PRESETS_FILE, "r", encoding="utf-8") as f:
@@ -141,7 +143,7 @@ def list_preset_names() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Общая логика подгонки шрифта (используется и PDF, и превью)
+# бщая логика подгонки шрифта (используется и PDF, и превью)
 # ---------------------------------------------------------------------------
 
 def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int, str, str]:
@@ -223,12 +225,12 @@ def make_pdf_one_per_page(codes: list[str], out_path: str | Path, settings: dict
 
 
 # ---------------------------------------------------------------------------
-# Превью (PIL, через python-barcode - не зависит от renderPM)
+# ревью (PIL, через python-barcode - не зависит от renderPM)
 # ---------------------------------------------------------------------------
 
 def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
     """
-    Отрисовать штрихкод Code128 как PIL.Image заданного размера,
+    трисовать штрихкод Code128 как PIL.Image заданного размера,
     используя python-barcode (чистый Python, без C-расширений).
     """
     import barcode
@@ -238,7 +240,7 @@ def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
 
     code128_cls = barcode.get_barcode_class("code128")
     writer = ImageWriter()
-    writer.dpi = 300  # высокое разрешение, потом сжимаем resize()-ом до нужного размера
+    writer.dpi = 300
 
     bc = code128_cls(code, writer=writer)
     buf = io.BytesIO()
@@ -250,11 +252,11 @@ def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
 
 def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: int = 8):
     """
-    Рендер этикетки в PIL.Image для живого превью в GUI. Текст кода
-    использует ТУ ЖЕ _fit_font_sizes(), что и PDF - позиции/пропорции
+    ендер этикетки в PIL.Image для живого превью в GUI. Текст кода
+    использует Т  _fit_font_sizes(), что и PDF - позиции/пропорции
     текста совпадают. Штрихкод рисуется через python-barcode - визуально
     эквивалентен PDF-версии (Code128), но не зависит от renderPM.
-    Рисует миллиметровую сетку с подписями (шаг 5 мм), если show_grid=1.
+    исует миллиметровую сетку с подписями (шаг 5 мм), если show_grid=1.
     """
     from PIL import Image, ImageDraw, ImageFont
 
@@ -295,7 +297,6 @@ def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: i
 
     draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(0, 0, 0), width=2)
 
-    # --- штрихкод ---
     margin_px = float(settings["margin_mm"]) * px_per_mm
     bw_px = W - 2 * margin_px
     bh_px = float(settings["barcode_h"]) * px_per_mm
@@ -314,9 +315,8 @@ def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: i
                 err_font = ImageFont.truetype(FONT_PATH, 9) if FONT_PATH else ImageFont.load_default()
             except Exception:
                 err_font = ImageFont.load_default()
-            draw.text((margin_px + 2, y_top_px + 2), f"Ошибка ШК: {e}", fill=(200, 0, 0), font=err_font)
+            draw.text((margin_px + 2, y_top_px + 2), f"шибка Ш: {e}", fill=(200, 0, 0), font=err_font)
 
-    # --- текст кода ---
     code_fs_pt, seq_fs_pt, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
     pt_to_px = px_per_mm / POINTS_PER_MM
 
