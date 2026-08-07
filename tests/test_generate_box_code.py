@@ -4,7 +4,7 @@ import os
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from generate_box_code import generate_box_code, MIN_RANDOM_CHARS, DATE_FORMATS
+from generate_box_code import generate_box_code, MIN_RANDOM_CHARS, MAX_RANDOM_CHARS, DATE_FORMATS
 
 FIXED_DATE = date(2026, 7, 16)
 
@@ -104,3 +104,22 @@ def test_all_date_formats_produce_valid_codes():
         code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format=fmt_key)
         assert len(code) <= 30
         assert code.upper().startswith("ALF")
+
+
+def test_random_part_capped_at_max_even_with_lots_of_free_budget():
+    # без даты, короткий кабинет/сезон/предмет - бюджет большой, но
+    # случайная часть НЕ должна раздуваться сверх MAX_RANDOM_CHARS
+    code = generate_box_code("A", "D", "B", 1, include_date=False)
+    randomseq_block = code.split("_")[-1]
+    random_part = randomseq_block[:-3]  # без 3 цифр seq
+    assert len(random_part) == MAX_RANDOM_CHARS
+    assert len(code) < 30  # раз бюджет не использован полностью, код короче максимума
+
+
+def test_random_part_uses_available_when_less_than_max():
+    # длинные season/item - доступный бюджет меньше MAX_RANDOM_CHARS,
+    # используется столько, сколько есть (не меньше MIN_RANDOM_CHARS)
+    code = generate_box_code("ALF", "SEA", "ITE", 1, gen_date=FIXED_DATE)
+    randomseq_block = code.split("_")[-1]
+    random_part = randomseq_block[:-3]
+    assert MIN_RANDOM_CHARS <= len(random_part) < MAX_RANDOM_CHARS

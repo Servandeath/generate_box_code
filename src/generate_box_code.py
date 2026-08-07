@@ -7,6 +7,14 @@
 date_format - см. DATE_FORMATS. RANDOMSEQ = случайные символы +
 порядковый номер, без разделителя.
 
+Случайная часть НЕ растягивается на весь свободный бюджет длины -
+максимум MAX_RANDOM_CHARS символов (по умолчанию 5), даже если
+освобождается больше места (например при отключённой дате). Если
+доступно меньше MAX_RANDOM_CHARS, но не меньше MIN_RANDOM_CHARS -
+используется столько, сколько есть. Итоговый код при этом может
+получиться короче 30 символов - это нормально, 30 - верхний предел
+формата, а не обязательная цель.
+
 Порядковый номер не ограничен сверху - ширина (кол-во цифр) считается
 динамически под ТЕКУЩЕЕ значение seq (минимум 3 цифры, растёт по мере
 роста номера: 001..999, затем 1000, 1001...).
@@ -20,6 +28,7 @@ from datetime import date
 MIN_CODE_LENGTH = 6
 MAX_CODE_LENGTH = 30
 MIN_RANDOM_CHARS = 3
+MAX_RANDOM_CHARS = 5
 SEQ_MIN = 1
 MIN_SEQ_DIGITS = 3
 
@@ -30,9 +39,6 @@ ITEM_CODE_LEN = 2
 RANDOM_ALPHABET = string.ascii_uppercase + string.digits
 _VALID_CHARS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-# Захардкоженные английские сокращения месяцев (НЕ через strftime("%b")) -
-# strftime зависит от системной локали и при русской локали вернёт
-# кириллицу ("янв"), которая запрещена правилами WB для кода короба.
 _MONTH_ABBR_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -71,16 +77,9 @@ def generate_box_code(
     Собирает код короба по формату:
     CABINET_[DATE_]SEASON_ITEM_RANDOMSEQ
 
-    include_date=True (по умолчанию) - использует gen_date (или сегодня,
-    если не указано) как часть кода, в формате date_format (см. DATE_FORMATS).
-    include_date=False - дата полностью исключается из кода вместе с
-    разделителем; gen_date и date_format в этом случае игнорируются.
-
-    seq не ограничен сверху. Ширина номера = max(MIN_SEQ_DIGITS, len(str(seq))).
-
     Бросает ValueError, если seq < 1, date_format не найден в DATE_FORMATS,
-    входные коды содержат недопустимые символы, или не остаётся места на
-    случайную часть.
+    входные коды содержат недопустимые символы, или не остаётся места
+    даже на минимальную случайную часть (MIN_RANDOM_CHARS).
     """
     if seq < SEQ_MIN:
         raise ValueError(f"seq должен быть >= {SEQ_MIN}, получено {seq}")
@@ -108,17 +107,22 @@ def generate_box_code(
 
     fixed_len = sum(len(p) for p in parts) + len(parts)  # +1 разделитель "_" после каждой части
     fixed_len += seq_digits
-    random_budget = MAX_CODE_LENGTH - fixed_len
+    available_budget = MAX_CODE_LENGTH - fixed_len
 
-    if random_budget < MIN_RANDOM_CHARS:
+    if available_budget < MIN_RANDOM_CHARS:
         raise ValueError(
-            f"Не хватает места под случайную часть: доступно {random_budget}, "
+            f"Не хватает места под случайную часть: доступно {available_budget}, "
             f"минимум {MIN_RANDOM_CHARS}. Сократите cabinet/season/item, "
             f"выберите более короткий формат даты, либо номер {seq} стал "
             f"слишком большим для формата."
         )
 
-    code = "_".join(parts) + f"_{_random_chars(random_budget)}{seq_part}"
+    # используем не весь доступный бюджет, а минимум из (доступно, MAX_RANDOM_CHARS) -
+    # лишний освободившийся бюджет (например при отключённой дате) просто
+    # не тратится, код получается короче 30 символов
+    random_len = min(available_budget, MAX_RANDOM_CHARS)
+
+    code = "_".join(parts) + f"_{_random_chars(random_len)}{seq_part}"
 
     if not (MIN_CODE_LENGTH <= len(code) <= MAX_CODE_LENGTH):
         raise ValueError(f"Итоговая длина кода {len(code)} вне диапазона 6-30")

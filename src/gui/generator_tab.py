@@ -1,20 +1,18 @@
 ﻿"""
-Вкладка "Генератор": слева - выбор кабинета/сезона/категории, генерация,
-таблица кодов (столбец по ширине содержимого, сам блок регулируется
-перетаскиванием сплиттера - и по ширине, и по высоте), экспорт PDF/Excel.
-Справа - превью и настройки этикетки (LabelSettingsWidget).
-Обе колонки внутри QScrollArea - при уменьшении окна появляются
-скроллбары вместо расползания раскладки.
+Вкладка "Генератор": слева - выбор кабинета/сезона/категории, настройка
+даты, генерация, компактная таблица кодов, экспорт PDF/Excel. Справа -
+превью и настройки этикетки (LabelSettingsWidget).
 """
 
 import os
 import sys
 import sqlite3
+from datetime import date as date_cls
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db import list_active, get_next_seq, code_exists, add_box_code
-from generate_box_code import generate_box_code
+from generate_box_code import generate_box_code, DATE_FORMATS, DEFAULT_DATE_FORMAT
 from label_render import make_pdf_one_per_page, load_label_settings, register_pdf_font
 from gui.label_settings_widget import LabelSettingsWidget
 
@@ -23,11 +21,24 @@ from openpyxl import Workbook
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
-    QScrollArea, QSplitter, QHeaderView,
+    QScrollArea, QSplitter, QHeaderView, QGroupBox, QDateEdit, QCheckBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
 
 MAX_ATTEMPTS_PER_CODE = 5
+
+# Примеры для выпадающего списка форматов даты - показывают человеку,
+# как это будет выглядеть, не заставляя запоминать ключи форматов
+DATE_FORMAT_EXAMPLES = {
+    "dd_MM_YYYY": "01_01_2026",
+    "dd-MM-YYYY": "01-01-2026",
+    "ddMMYY": "010126",
+    "YYMMDD": "260101",
+    "YYYYMMDD": "20260101",
+    "MM_YY": "01_26",
+    "MM-YY": "01-26",
+    "DMonYY": "1Jan26",
+}
 
 
 class GeneratorTab(QWidget):
@@ -45,9 +56,13 @@ class GeneratorTab(QWidget):
         # ---- левая колонка ----
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.addWidget(QLabel("<b>Генератор кодов короба</b>"))
 
-        form = QHBoxLayout()
+        top_row = QHBoxLayout()
+
+        # -- блок 1: выбор справочников и количество --
+        refs_group = QGroupBox("Генератор кодов короба")
+        refs_layout = QVBoxLayout()
+        refs_form = QHBoxLayout()
         self.cabinet_combo = QComboBox()
         self.season_combo = QComboBox()
         self.item_combo = QComboBox()
@@ -55,23 +70,57 @@ class GeneratorTab(QWidget):
         self.qty_spin.setRange(1, 9999)
         self.qty_spin.setValue(1)
 
-        form.addWidget(QLabel("Кабинет:"))
-        form.addWidget(self.cabinet_combo)
-        form.addWidget(QLabel("Сезон:"))
-        form.addWidget(self.season_combo)
-        form.addWidget(QLabel("Категория:"))
-        form.addWidget(self.item_combo)
-        form.addWidget(QLabel("Кол-во:"))
-        form.addWidget(self.qty_spin)
-        left_layout.addLayout(form)
+        refs_form.addWidget(QLabel("Кабинет:"))
+        refs_form.addWidget(self.cabinet_combo)
+        refs_form.addWidget(QLabel("Сезон:"))
+        refs_form.addWidget(self.season_combo)
+        refs_form.addWidget(QLabel("Категория:"))
+        refs_form.addWidget(self.item_combo)
+        refs_form.addWidget(QLabel("Кол-во:"))
+        refs_form.addWidget(self.qty_spin)
+        refs_layout.addLayout(refs_form)
+        refs_group.setLayout(refs_layout)
+
+        # -- блок 2: настройка и выбор даты --
+        date_group = QGroupBox("Настройка и выбор даты")
+        date_layout = QVBoxLayout()
+        date_form = QHBoxLayout()
+
+        self.date_format_combo = QComboBox()
+        for key in DATE_FORMATS:
+            self.date_format_combo.addItem(f"{key} ({DATE_FORMAT_EXAMPLES.get(key, '?')})", key)
+        idx = self.date_format_combo.findData(DEFAULT_DATE_FORMAT)
+        if idx >= 0:
+            self.date_format_combo.setCurrentIndex(idx)
+        self.date_format_combo.currentIndexChanged.connect(self._update_date_example)
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.dateChanged.connect(self._update_date_example)
+
+        self.no_date_checkbox = QCheckBox("Без даты")
+        self.no_date_checkbox.stateChanged.connect(self._on_no_date_toggled)
+
+        date_form.addWidget(QLabel("Формат:"))
+        date_form.addWidget(self.date_format_combo)
+        date_form.addWidget(QLabel("Дата:"))
+        date_form.addWidget(self.date_edit)
+        date_form.addWidget(self.no_date_checkbox)
+        date_layout.addLayout(date_form)
+
+        self.date_example_label = QLabel("")
+        date_layout.addWidget(self.date_example_label)
+
+        date_group.setLayout(date_layout)
+
+        top_row.addWidget(refs_group, stretch=2)
+        top_row.addWidget(date_group, stretch=1)
+        left_layout.addLayout(top_row)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
         left_layout.addWidget(gen_btn)
 
-        # таблица + кнопки экспорта - в вертикальном сплиттере, чтобы
-        # блок можно было тянуть и по высоте (перетаскиванием), и по
-        # ширине (перетаскиванием главного горизонтального сплиттера)
         left_splitter = QSplitter(Qt.Vertical)
 
         table_container = QWidget()
@@ -124,6 +173,26 @@ class GeneratorTab(QWidget):
         outer_layout.addWidget(main_splitter)
 
         self.refresh_lists()
+        self._update_date_example()
+
+    def _on_no_date_toggled(self):
+        disabled = self.no_date_checkbox.isChecked()
+        self.date_format_combo.setEnabled(not disabled)
+        self.date_edit.setEnabled(not disabled)
+        self._update_date_example()
+
+    def _update_date_example(self):
+        if self.no_date_checkbox.isChecked():
+            self.date_example_label.setText("Пример: дата не будет включена в код")
+            return
+        date_key = self.date_format_combo.currentData()
+        qd = self.date_edit.date()
+        py_date = date_cls(qd.year(), qd.month(), qd.day())
+        try:
+            formatted = DATE_FORMATS[date_key](py_date)
+            self.date_example_label.setText(f"Пример: ...{formatted}...")
+        except Exception:
+            self.date_example_label.setText("Пример: -")
 
     def refresh_lists(self):
         self.cabinet_combo.clear()
@@ -138,13 +207,18 @@ class GeneratorTab(QWidget):
 
     def _generate_and_write(self):
         if self.cabinet_combo.count() == 0 or self.season_combo.count() == 0 or self.item_combo.count() == 0:
-            QMessageBox.warning(self, "Ошибка", "Сначала добавьте записи во все справочники (вкладки выше)")
+            QMessageBox.warning(self, "Ошибка", "Сначала добавьте записи во все справочники (вкладка Справочники)")
             return
 
         cabinet_id, cabinet_code = self.cabinet_combo.currentData()
         season_id, season_code = self.season_combo.currentData()
         item_id, item_code = self.item_combo.currentData()
         qty = self.qty_spin.value()
+
+        include_date = not self.no_date_checkbox.isChecked()
+        date_format = self.date_format_combo.currentData()
+        qd = self.date_edit.date()
+        gen_date = date_cls(qd.year(), qd.month(), qd.day())
 
         start_seq = get_next_seq(self.conn, cabinet_id)
 
@@ -156,7 +230,10 @@ class GeneratorTab(QWidget):
             code = None
             for _ in range(MAX_ATTEMPTS_PER_CODE):
                 try:
-                    candidate = generate_box_code(cabinet_code, season_code, item_code, seq)
+                    candidate = generate_box_code(
+                        cabinet_code, season_code, item_code, seq,
+                        gen_date=gen_date, include_date=include_date, date_format=date_format,
+                    )
                 except ValueError as e:
                     QMessageBox.critical(self, "Ошибка генерации", str(e))
                     self._finish_batch(written_codes)
