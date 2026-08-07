@@ -1,35 +1,39 @@
 ﻿"""
-трисовка этикетки короба: штрихкод Code128 (растянут на всю ширину
+Отрисовка этикетки короба: штрихкод Code128 (растянут на всю ширину
 этикетки за вычетом отступов) + текст кода, где последние seq_digits
 символов (порядковый номер) печатаются увеличенным шрифтом.
 
-PDF рисуется через reportlab (renderPDF) - надёжный, проверенный путь.
-ревью рисуется через python-barcode (чистый Python, без хрупких
-C-бэкендов вроде renderPM) - визуально то же самое, но не зависит
-от специфики конкретной установки reportlab на машине.
+ВАЖНО про превью: render_preview_image() генерирует НАСТОЯЩИЙ PDF в
+памяти (той же функцией make_pdf_one_per_page, что и печать) и
+растеризует его через PyMuPDF. Это не отдельная "похожая" реализация
+рендера - превью буквально является снимком реального PDF, поэтому
+расхождение между превью и итоговым файлом больше не может возникнуть
+в принципе, каким бы способом код ни менялся в будущем.
 
-оддерживаются именованные шаблоны настроек (пресеты) - например
+Сетка и рамка зоны отступов рисуются ПОЛУПРОЗРАЧНЫМ слоем поверх
+растрового изображения (alpha-композиция), а не сплошными линиями -
+иначе они перекрывали бы штрихкод и текст жирным цветом.
+
+Поддерживаются именованные шаблоны настроек (пресеты) - например
 разные размеры этикеток под разные задачи.
 """
 
+import io
 import json
 import os
 from pathlib import Path
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.graphics import renderPDF
-from reportlab.graphics.barcode import createBarcodeDrawing
 
 from app_paths import get_app_data_dir
 
 PDF_FONT_NAME = "LabelFont"
 SETTINGS_FILE = get_app_data_dir() / "label_settings.json"
 PRESETS_FILE = get_app_data_dir() / "label_presets.json"
-
-POINTS_PER_MM = 2.834645669291339  # 72 pt/inch / 25.4 mm/inch
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arial.ttf",
@@ -109,12 +113,7 @@ def save_label_settings(settings: dict) -> None:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
-# ---------------------------------------------------------------------------
-# ресеты (именованные шаблоны настроек)
-# ---------------------------------------------------------------------------
-
 def load_presets() -> dict:
-    """ернуть словарь {имя_пресета: settings}. усто, если файла ещё нет."""
     if PRESETS_FILE.exists():
         try:
             with open(PRESETS_FILE, "r", encoding="utf-8") as f:
@@ -142,10 +141,6 @@ def list_preset_names() -> list[str]:
     return sorted(load_presets().keys())
 
 
-# ---------------------------------------------------------------------------
-# бщая логика подгонки шрифта (используется и PDF, и превью)
-# ---------------------------------------------------------------------------
-
 def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int, str, str]:
     seq_digits = int(settings["seq_digits"])
     prefix = code[:-seq_digits] if seq_digits > 0 else code
@@ -170,27 +165,35 @@ def _fit_font_sizes(code: str, settings: dict, font_name: str) -> tuple[int, int
     return code_fs, seq_fs, prefix, seq_part
 
 
-# ---------------------------------------------------------------------------
-# PDF (reportlab, проверенный путь - не трогаем)
-# ---------------------------------------------------------------------------
+def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
+    import barcode
+    from barcode.writer import ImageWriter
+    from PIL import Image
 
-def draw_barcode(c: canvas.Canvas, code: str, settings: dict):
+    code128_cls = barcode.get_barcode_class("code128")
+    writer = ImageWriter()
+    writer.dpi = 300
+
+    bc = code128_cls(code, writer=writer)
+    buf = io.BytesIO()
+    bc.write(buf, options={"write_text": False, "quiet_zone": 2.0, "module_height": 15.0})
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    return img.resize((max(1, w_px), max(1, h_px)))
+
+
+def draw_barcode_pdf(c: canvas.Canvas, code: str, settings: dict):
     margin = float(settings["margin_mm"]) * mm
-    w = (float(settings["label_w_mm"]) * mm) - 2 * margin
-    h = float(settings["barcode_h"]) * mm
+    w_mm = float(settings["label_w_mm"]) - 2 * float(settings["margin_mm"])
+    h_mm = float(settings["barcode_h"])
     y = float(settings["barcode_y"]) * mm
 
-    drawing = createBarcodeDrawing(
-        "Code128",
-        value=code,
-        width=w,
-        height=h,
-        humanReadable=False,
-    )
-    c.saveState()
-    c.translate(margin, y)
-    renderPDF.draw(drawing, c, 0, 0)
-    c.restoreState()
+    px_per_mm = 300 / 25.4
+    w_px = max(1, int(w_mm * px_per_mm))
+    h_px = max(1, int(h_mm * px_per_mm))
+
+    img = _render_barcode_bars_pil(code, w_px, h_px)
+    c.drawImage(ImageReader(img), margin, y, width=w_mm * mm, height=h_mm * mm)
 
 
 def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
@@ -209,65 +212,60 @@ def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
 
 
 def draw_label(c: canvas.Canvas, code: str, settings: dict, font_name: str):
-    draw_barcode(c, code, settings)
+    draw_barcode_pdf(c, code, settings)
     draw_code_text(c, code, settings, font_name)
 
 
-def make_pdf_one_per_page(codes: list[str], out_path: str | Path, settings: dict, font_name: str):
+def make_pdf_one_per_page(codes: list[str], out_path, settings: dict, font_name: str):
     w = float(settings["label_w_mm"]) * mm
     h = float(settings["label_h_mm"]) * mm
-    c = canvas.Canvas(str(out_path), pagesize=(w, h))
+
+    is_path = isinstance(out_path, (str, Path))
+    target = str(out_path) if is_path else out_path
+
+    c = canvas.Canvas(target, pagesize=(w, h))
     for code in codes:
         draw_label(c, code, settings, font_name)
         c.showPage()
     c.save()
-    return Path(out_path)
 
-
-# ---------------------------------------------------------------------------
-# ревью (PIL, через python-barcode - не зависит от renderPM)
-# ---------------------------------------------------------------------------
-
-def _render_barcode_bars_pil(code: str, w_px: int, h_px: int):
-    """
-    трисовать штрихкод Code128 как PIL.Image заданного размера,
-    используя python-barcode (чистый Python, без C-расширений).
-    """
-    import barcode
-    from barcode.writer import ImageWriter
-    from PIL import Image
-    import io
-
-    code128_cls = barcode.get_barcode_class("code128")
-    writer = ImageWriter()
-    writer.dpi = 300
-
-    bc = code128_cls(code, writer=writer)
-    buf = io.BytesIO()
-    bc.write(buf, options={"write_text": False, "quiet_zone": 0, "module_height": 15.0})
-    buf.seek(0)
-    img = Image.open(buf).convert("RGB")
-    return img.resize((max(1, w_px), max(1, h_px)))
+    return Path(out_path) if is_path else out_path
 
 
 def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: int = 8):
     """
-    ендер этикетки в PIL.Image для живого превью в GUI. Текст кода
-    использует Т  _fit_font_sizes(), что и PDF - позиции/пропорции
-    текста совпадают. Штрихкод рисуется через python-barcode - визуально
-    эквивалентен PDF-версии (Code128), но не зависит от renderPM.
-    исует миллиметровую сетку с подписями (шаг 5 мм), если show_grid=1.
+    Рендер этикетки в PIL.Image для живого превью в GUI. Генерирует
+    настоящий PDF в памяти и растеризует его через PyMuPDF - превью
+    физически является снимком реального PDF. Сетка (шаг 5 мм) и рамка
+    зоны отступов рисуются полупрозрачным слоем поверх - видны на белом
+    фоне, но не перекрывают штрихкод/текст сплошным цветом.
     """
+    import fitz
     from PIL import Image, ImageDraw, ImageFont
 
-    W = int(float(settings["label_w_mm"]) * px_per_mm)
-    H = int(float(settings["label_h_mm"]) * px_per_mm)
+    buf = io.BytesIO()
+    make_pdf_one_per_page([code], buf, settings, font_name)
+    buf.seek(0)
 
-    img = Image.new("RGB", (W, H), "white")
-    draw = ImageDraw.Draw(img)
+    dpi = px_per_mm * 25.4
+    doc = fitz.open(stream=buf.getvalue(), filetype="pdf")
+    page = doc[0]
+    zoom = dpi / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+    base_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
+    doc.close()
 
+    W, H = base_img.size
     label_w_mm = float(settings["label_w_mm"])
     label_h_mm = float(settings["label_h_mm"])
+    margin_mm = float(settings["margin_mm"])
+
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay)
+
+    GRID_COLOR = (90, 90, 255, 70)       # полупрозрачный синий - сетка 5мм
+    MARGIN_COLOR = (255, 120, 0, 160)    # полупрозрачный оранжевый - зона отступов
+    AXIS_TEXT_COLOR = (60, 60, 180, 220)
 
     if int(settings.get("show_grid", 1)):
         try:
@@ -278,63 +276,36 @@ def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: i
         gx = 0
         while gx <= label_w_mm:
             px = gx * px_per_mm
-            draw.line([(px, 0), (px, H)], fill=(225, 225, 235), width=1)
+            odraw.line([(px, 0), (px, H)], fill=GRID_COLOR, width=1)
             gx += 5
         gy = 0
         while gy <= label_h_mm:
             py = H - gy * px_per_mm
-            draw.line([(0, py), (W, py)], fill=(225, 225, 235), width=1)
+            odraw.line([(0, py), (W, py)], fill=GRID_COLOR, width=1)
             gy += 5
 
         gx = 0
         while gx <= label_w_mm:
-            draw.text((gx * px_per_mm + 1, 1), str(int(gx)), fill=(150, 150, 170), font=axis_font)
+            odraw.text((gx * px_per_mm + 1, 1), str(int(gx)), fill=AXIS_TEXT_COLOR, font=axis_font)
             gx += 10
         gy = 10
         while gy <= label_h_mm:
-            draw.text((1, H - gy * px_per_mm + 1), str(int(gy)), fill=(150, 150, 170), font=axis_font)
+            odraw.text((1, H - gy * px_per_mm + 1), str(int(gy)), fill=AXIS_TEXT_COLOR, font=axis_font)
             gy += 10
 
-    draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(0, 0, 0), width=2)
+        # рамка зоны отступов - показывает, где реально начинается контент
+        # (margin_mm от каждого края), отдельным цветом от сетки
+        mx = margin_mm * px_per_mm
+        my = margin_mm * px_per_mm
+        odraw.rectangle(
+            [(mx, my), (W - mx, H - my)],
+            outline=MARGIN_COLOR, width=2,
+        )
 
-    margin_px = float(settings["margin_mm"]) * px_per_mm
-    bw_px = W - 2 * margin_px
-    bh_px = float(settings["barcode_h"]) * px_per_mm
-    y_top_px = H - (float(settings["barcode_y"]) * px_per_mm) - bh_px
+    composed = Image.alpha_composite(base_img, overlay).convert("RGB")
 
-    if bw_px > 0 and bh_px > 0:
-        try:
-            bc_img = _render_barcode_bars_pil(code, int(bw_px), int(bh_px))
-            img.paste(bc_img, (int(margin_px), int(y_top_px)))
-        except Exception as e:
-            draw.rectangle(
-                [(margin_px, y_top_px), (margin_px + bw_px, y_top_px + bh_px)],
-                outline=(200, 0, 0), width=2,
-            )
-            try:
-                err_font = ImageFont.truetype(FONT_PATH, 9) if FONT_PATH else ImageFont.load_default()
-            except Exception:
-                err_font = ImageFont.load_default()
-            draw.text((margin_px + 2, y_top_px + 2), f"шибка Ш: {e}", fill=(200, 0, 0), font=err_font)
+    # внешняя рамка = граница настоящей PDF-страницы (не отдельно нарисованный прямоугольник)
+    final_draw = ImageDraw.Draw(composed)
+    final_draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(0, 0, 0), width=2)
 
-    code_fs_pt, seq_fs_pt, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
-    pt_to_px = px_per_mm / POINTS_PER_MM
-
-    try:
-        code_font = ImageFont.truetype(FONT_PATH, max(6, int(code_fs_pt * pt_to_px))) if FONT_PATH else ImageFont.load_default()
-        seq_font = ImageFont.truetype(FONT_PATH, max(6, int(seq_fs_pt * pt_to_px))) if FONT_PATH else ImageFont.load_default()
-    except Exception:
-        code_font = ImageFont.load_default()
-        seq_font = ImageFont.load_default()
-
-    x_px = margin_px
-    y_baseline_px = H - (float(settings["code_y"]) * px_per_mm)
-    ascent, _ = code_font.getmetrics()
-    draw.text((x_px, y_baseline_px - ascent), prefix, fill=(0, 0, 0), font=code_font)
-
-    if seq_part:
-        prefix_w_px = draw.textlength(prefix, font=code_font)
-        ascent_seq, _ = seq_font.getmetrics()
-        draw.text((x_px + prefix_w_px, y_baseline_px - ascent_seq), seq_part, fill=(0, 0, 0), font=seq_font)
-
-    return img
+    return composed

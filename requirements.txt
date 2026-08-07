@@ -4,3 +4,4 @@ pillow
 PySide6
 pytest
 python-barcode
+pymupdf
