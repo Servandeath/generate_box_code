@@ -4,7 +4,7 @@ import os
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from generate_box_code import generate_box_code, MIN_RANDOM_CHARS
+from generate_box_code import generate_box_code, MIN_RANDOM_CHARS, DATE_FORMATS
 
 FIXED_DATE = date(2026, 7, 16)
 
@@ -55,3 +55,52 @@ def test_random_part_has_minimum_entropy():
 def test_no_wb_prefix():
     with pytest.raises(ValueError):
         generate_box_code("WBC", "DE", "BT", 1, gen_date=FIXED_DATE)
+
+
+def test_include_date_false_omits_date_entirely():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, include_date=False)
+    assert code.startswith("ALF_DE_BT_")
+    assert "16_07_2026" not in code
+    assert "2026" not in code
+
+
+def test_date_format_dd_dash_mm_dash_yyyy():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="dd-MM-YYYY")
+    assert "16-07-2026" in code
+
+
+def test_date_format_ddmmyy_compact():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="ddMMYY")
+    assert "160726" in code
+
+
+def test_date_format_yymmdd():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="YYMMDD")
+    assert "260716" in code
+
+
+def test_date_format_yyyymmdd():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="YYYYMMDD")
+    assert "20260716" in code
+
+
+def test_date_format_mm_yy():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="MM_YY")
+    assert "07_26" in code
+
+
+def test_date_format_dmonyy_uses_english_month_no_locale_dependency():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="DMonYY")
+    assert "16Jul26" in code
+
+
+def test_unknown_date_format_raises():
+    with pytest.raises(ValueError):
+        generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format="not_a_real_format")
+
+
+def test_all_date_formats_produce_valid_codes():
+    for fmt_key in DATE_FORMATS:
+        code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, date_format=fmt_key)
+        assert len(code) <= 30
+        assert code.upper().startswith("ALF")
