@@ -1,7 +1,12 @@
 ﻿"""
-Вкладка "Генератор": слева - выбор кабинета/сезона/категории, настройка
-даты, генерация, компактная таблица кодов, экспорт PDF/Excel. Справа -
-превью и настройки этикетки (LabelSettingsWidget).
+Вкладка "Генератор": слева - выбор кабинета/сезона/категории (сверху),
+настройка даты (под ней), генерация, компактная таблица кодов, экспорт
+PDF/Excel. Справа - превью и настройки этикетки (LabelSettingsWidget).
+
+Таблица кодов накапливает ВСЕ коды за сессию (не только последний
+пакет) - можно выделить любые строки (Ctrl/Shift+клик) и распечатать
+или экспортировать именно выделенное; если ничего не выделено -
+используется последний сгенерированный пакет.
 """
 
 import os
@@ -22,13 +27,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
     QScrollArea, QSplitter, QHeaderView, QGroupBox, QDateEdit, QCheckBox,
+    QAbstractItemView, QFrame,
 )
 from PySide6.QtCore import Qt, QDate
 
 MAX_ATTEMPTS_PER_CODE = 5
 
-# Примеры для выпадающего списка форматов даты - показывают человеку,
-# как это будет выглядеть, не заставляя запоминать ключи форматов
 DATE_FORMAT_EXAMPLES = {
     "dd_MM_YYYY": "01_01_2026",
     "dd-MM-YYYY": "01-01-2026",
@@ -39,6 +43,22 @@ DATE_FORMAT_EXAMPLES = {
     "MM-YY": "01-26",
     "DMonYY": "1Jan26",
 }
+
+CALENDAR_STYLE = """
+QCalendarWidget QToolButton {
+    color: white;
+    background-color: #3a3a3a;
+    icon-size: 18px, 18px;
+    border-radius: 3px;
+}
+QCalendarWidget QToolButton:hover {
+    background-color: #505050;
+}
+QCalendarWidget QMenu {
+    background-color: #3a3a3a;
+    color: white;
+}
+"""
 
 
 class GeneratorTab(QWidget):
@@ -56,8 +76,6 @@ class GeneratorTab(QWidget):
         # ---- левая колонка ----
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-
-        top_row = QHBoxLayout()
 
         # -- блок 1: выбор справочников и количество --
         refs_group = QGroupBox("Генератор кодов короба")
@@ -80,8 +98,9 @@ class GeneratorTab(QWidget):
         refs_form.addWidget(self.qty_spin)
         refs_layout.addLayout(refs_form)
         refs_group.setLayout(refs_layout)
+        left_layout.addWidget(refs_group)
 
-        # -- блок 2: настройка и выбор даты --
+        # -- блок 2 (ПОД блоком 1): настройка и выбор даты --
         date_group = QGroupBox("Настройка и выбор даты")
         date_layout = QVBoxLayout()
         date_form = QHBoxLayout()
@@ -96,6 +115,7 @@ class GeneratorTab(QWidget):
 
         self.date_edit = QDateEdit(QDate.currentDate())
         self.date_edit.setCalendarPopup(True)
+        self.date_edit.calendarWidget().setStyleSheet(CALENDAR_STYLE)
         self.date_edit.dateChanged.connect(self._update_date_example)
 
         self.no_date_checkbox = QCheckBox("Без даты")
@@ -108,14 +128,19 @@ class GeneratorTab(QWidget):
         date_form.addWidget(self.no_date_checkbox)
         date_layout.addLayout(date_form)
 
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("color: #555;")
+        date_layout.addWidget(separator)
+
         self.date_example_label = QLabel("")
+        self.date_example_label.setStyleSheet(
+            "border: 1px solid #666; border-radius: 4px; padding: 4px; background-color: #2a2a2a;"
+        )
         date_layout.addWidget(self.date_example_label)
 
         date_group.setLayout(date_layout)
-
-        top_row.addWidget(refs_group, stretch=2)
-        top_row.addWidget(date_group, stretch=1)
-        left_layout.addLayout(top_row)
+        left_layout.addWidget(date_group)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
@@ -125,22 +150,26 @@ class GeneratorTab(QWidget):
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
-        table_layout.addWidget(QLabel("Сгенерированные коды:"))
+        table_layout.addWidget(QLabel("Сгенерированные коды (выделите строки для печати/экспорта части списка):"))
 
         self.table = QTableWidget(0, 1)
         self.table.setHorizontalHeaderLabels(["Код короба"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         table_layout.addWidget(self.table)
         left_splitter.addWidget(table_container)
 
         export_container = QWidget()
         export_layout = QVBoxLayout(export_container)
         export_row = QHBoxLayout()
-        self.pdf_btn = QPushButton("Сохранить этикетки PDF (последний пакет)")
+        self.pdf_btn = QPushButton("Сохранить PDF")
+        self.pdf_btn.setToolTip("Печатает выделенные строки; если ничего не выделено - последний сгенерированный пакет")
         self.pdf_btn.clicked.connect(self._save_pdf)
         self.pdf_btn.setEnabled(False)
-        self.excel_btn = QPushButton("Экспорт в Excel (последний пакет)")
+        self.excel_btn = QPushButton("Экспорт в Excel")
+        self.excel_btn.setToolTip("Экспортирует выделенные строки; если ничего не выделено - последний сгенерированный пакет")
         self.excel_btn.clicked.connect(self._save_excel)
         self.excel_btn.setEnabled(False)
         export_row.addWidget(self.pdf_btn)
@@ -154,10 +183,7 @@ class GeneratorTab(QWidget):
 
         left_layout.addWidget(left_splitter)
 
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setWidget(left_widget)
-
+        
         # ---- правая колонка ----
         self.label_settings = LabelSettingsWidget()
 
@@ -165,8 +191,9 @@ class GeneratorTab(QWidget):
         right_scroll.setWidgetResizable(True)
         right_scroll.setWidget(self.label_settings)
 
-        main_splitter.addWidget(left_scroll)
+        main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_scroll)
+        main_splitter.setChildrenCollapsible(False)
         main_splitter.setStretchFactor(0, 1)
         main_splitter.setStretchFactor(1, 1)
 
@@ -270,25 +297,36 @@ class GeneratorTab(QWidget):
         self.table.resizeColumnsToContents()
 
         self._last_batch = codes
-        has_batch = len(codes) > 0
-        self.pdf_btn.setEnabled(has_batch)
-        self.excel_btn.setEnabled(has_batch)
+        # кнопки активны, если в таблице ЕСТЬ строки вообще (не только
+        # из последнего пакета) - можно выделить и распечатать любые
+        has_rows = self.table.rowCount() > 0
+        self.pdf_btn.setEnabled(has_rows)
+        self.excel_btn.setEnabled(has_rows)
+
+    def _get_export_codes(self) -> list[str]:
+        """Выделенные в таблице строки, если есть выделение; иначе последний пакет."""
+        selected_rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
+        if selected_rows:
+            return [self.table.item(r, 0).text() for r in selected_rows]
+        return self._last_batch
 
     def _save_pdf(self):
-        if not self._last_batch:
+        codes = self._get_export_codes()
+        if not codes:
             return
         path, _ = QFileDialog.getSaveFileName(self, "Сохранить этикетки", "labels.pdf", "PDF files (*.pdf)")
         if not path:
             return
         try:
             settings = load_label_settings()
-            make_pdf_one_per_page(self._last_batch, path, settings, self._pdf_font_name)
-            QMessageBox.information(self, "Готово", f"Этикетки сохранены: {path}")
+            make_pdf_one_per_page(codes, path, settings, self._pdf_font_name)
+            QMessageBox.information(self, "Готово", f"Этикетки сохранены ({len(codes)} шт.): {path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
 
     def _save_excel(self):
-        if not self._last_batch:
+        codes = self._get_export_codes()
+        if not codes:
             return
         path, _ = QFileDialog.getSaveFileName(self, "Экспорт в Excel", "codes.xlsx", "Excel files (*.xlsx)")
         if not path:
@@ -297,9 +335,12 @@ class GeneratorTab(QWidget):
             wb = Workbook()
             ws = wb.active
             ws.title = "Коды коробов"
-            for code in self._last_batch:
+            for code in codes:
                 ws.append([code])
             wb.save(path)
-            QMessageBox.information(self, "Готово", f"Excel сохранён: {path}")
+            QMessageBox.information(self, "Готово", f"Excel сохранён ({len(codes)} шт.): {path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
+
+
+

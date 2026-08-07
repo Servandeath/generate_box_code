@@ -42,3 +42,17 @@ def get_app_data_dir() -> Path:
     app_dir = base / "generate_box_code"
     app_dir.mkdir(parents=True, exist_ok=True)
     return app_dir
+
+
+def get_resource_path(relative_path: str) -> str:
+    """
+    Путь к файлу-ресурсу (например иконке), вшитому в сборку через
+    --add-data. При запуске из исходников - рядом с кодом (src/).
+    При запуске собранного .exe - во временной папке распаковки
+    PyInstaller (sys._MEIPASS), куда --add-data копирует файлы.
+    """
+    if is_frozen():
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).parent
+    return str(base / relative_path)

@@ -1,9 +1,16 @@
 ﻿"""
 Виджет "Превью и настройки этикетки": живое превью (PIL -> QPixmap),
 поля настроек, тестовый код, кнопка тестовой печати, а также именованные
-шаблоны настроек (пресеты) - удобно, если нужны разные размеры этикеток
-под разные задачи. Превью и блок настроек разделены вертикальным
-сплиттером (можно тянуть границу), настройки можно скрыть/показать.
+шаблоны настроек (пресеты).
+
+Два момента для удобства при листании страницы:
+1. Поля настроек (NoScrollSpinBox) НЕ реагируют на колесо мыши, пока
+   не сфокусированы явным кликом - иначе прокрутка страницы колесом
+   мыши, случайно оказавшимся над полем, незаметно меняла значение.
+2. Ctrl+Z откатывает последние изменения настроек (стек на 30 шагов).
+
+Превью и настройки прокручиваются как единое целое (общий скролл
+задаётся снаружи, в generator_tab.py) - см. addStretch() в конце.
 """
 
 import os
@@ -28,12 +35,30 @@ from label_render import (
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
     QSpinBox, QPushButton, QMessageBox, QFileDialog, QGroupBox,
-    QSplitter, QComboBox, QInputDialog, QCheckBox,
+    QComboBox, QInputDialog, QCheckBox,
 )
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
 TEST_CODE_DEFAULT = "ALF_19_07_2026_DE_BS_TFNYZY419"
+UNDO_STACK_LIMIT = 30
+
+
+class NoScrollSpinBox(QSpinBox):
+    """
+    QSpinBox, который меняет значение колесом мыши ТОЛЬКО когда явно
+    сфокусирован (кликнули в поле) - иначе колесо просто прокручивает
+    страницу дальше, как и должно быть, а не портит значение поля.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
 
 class LabelSettingsWidget(QWidget):
@@ -41,11 +66,12 @@ class LabelSettingsWidget(QWidget):
         super().__init__(parent)
         self.settings = load_label_settings()
         self.font_name = register_pdf_font()
+        self._undo_stack: list[dict] = []
+        self._suppress_undo_snapshot = False
 
-        outer_layout = QVBoxLayout(self)
-        outer_layout.addWidget(QLabel("<b>Превью и настройки этикетки</b>"))
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Превью и настройки этикетки</b>"))
 
-        # ---- строка пресетов ----
         preset_row = QHBoxLayout()
         preset_row.addWidget(QLabel("Шаблон:"))
         self.preset_combo = QComboBox()
@@ -62,36 +88,31 @@ class LabelSettingsWidget(QWidget):
         preset_row.addWidget(load_preset_btn)
         preset_row.addWidget(save_preset_btn)
         preset_row.addWidget(delete_preset_btn)
-        outer_layout.addLayout(preset_row)
+        layout.addLayout(preset_row)
 
         test_row = QHBoxLayout()
         test_row.addWidget(QLabel("Тестовый код:"))
         self.test_code_input = QLineEdit(TEST_CODE_DEFAULT)
         self.test_code_input.textChanged.connect(self.refresh_preview)
         test_row.addWidget(self.test_code_input)
-        outer_layout.addLayout(test_row)
+        layout.addLayout(test_row)
 
-        # ---- вертикальный сплиттер: превью сверху, настройки снизу ----
-        splitter = QSplitter(Qt.Vertical)
-
-        preview_container = QWidget()
-        preview_layout = QVBoxLayout(preview_container)
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("background-color: #eeeeee; border: 1px solid #999;")
-        self.preview_label.setMinimumHeight(150)
-        preview_layout.addWidget(self.preview_label)
-        splitter.addWidget(preview_container)
-
-        settings_container = QWidget()
-        settings_layout = QVBoxLayout(settings_container)
+        layout.addWidget(self.preview_label)
 
         toggle_row = QHBoxLayout()
         self.toggle_settings_btn = QPushButton("Скрыть настройки")
         self.toggle_settings_btn.clicked.connect(self._toggle_settings_visible)
         toggle_row.addWidget(self.toggle_settings_btn)
+
+        undo_btn = QPushButton("Отменить (Ctrl+Z)")
+        undo_btn.clicked.connect(self._undo)
+        toggle_row.addWidget(undo_btn)
+
         toggle_row.addStretch()
-        settings_layout.addLayout(toggle_row)
+        layout.addLayout(toggle_row)
 
         self.settings_group = QGroupBox("Настройки (мм / пт)")
         form = QFormLayout()
@@ -110,7 +131,7 @@ class LabelSettingsWidget(QWidget):
             ("min_font_size", "Мин. размер шрифта при сжатии, пт", 4, 20),
         ]
         for key, label, lo, hi in field_defs:
-            spin = QSpinBox()
+            spin = NoScrollSpinBox()
             spin.setRange(lo, hi)
             spin.setValue(int(self.settings.get(key, DEFAULT_LABEL_SETTINGS[key])))
             spin.valueChanged.connect(self._on_setting_changed)
@@ -123,27 +144,42 @@ class LabelSettingsWidget(QWidget):
         form.addRow(self.grid_checkbox)
 
         self.settings_group.setLayout(form)
-        settings_layout.addWidget(self.settings_group)
+        layout.addWidget(self.settings_group)
 
         btn_row = QHBoxLayout()
         save_btn = QPushButton("Сохранить настройки")
         save_btn.clicked.connect(self._save_settings)
-        print_test_btn = QPushButton("Печать тестовая (1 этикетка)")
+        print_test_btn = QPushButton("Печать тестовая")
+        print_test_btn.setToolTip("Печать тестовая (1 этикетка)")
         print_test_btn.clicked.connect(self._print_test)
         btn_row.addWidget(save_btn)
         btn_row.addWidget(print_test_btn)
-        settings_layout.addLayout(btn_row)
-        settings_layout.addStretch()
+        layout.addLayout(btn_row)
+        layout.addStretch()
 
-        splitter.addWidget(settings_container)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-
-        outer_layout.addWidget(splitter)
+        undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        undo_shortcut.activated.connect(self._undo)
 
         self.refresh_preview()
 
+    def _push_undo_snapshot(self):
+        if self._suppress_undo_snapshot:
+            return
+        self._undo_stack.append(self.settings.copy())
+        if len(self._undo_stack) > UNDO_STACK_LIMIT:
+            self._undo_stack.pop(0)
+
+    def _undo(self):
+        if not self._undo_stack:
+            return
+        self.settings = self._undo_stack.pop()
+        self._suppress_undo_snapshot = True
+        self._apply_settings_to_form()
+        self._suppress_undo_snapshot = False
+        self.refresh_preview()
+
     def _on_setting_changed(self):
+        self._push_undo_snapshot()
         for key, spin in self.spins.items():
             self.settings[key] = spin.value()
         self.settings["show_grid"] = 1 if self.grid_checkbox.isChecked() else 0
@@ -205,6 +241,7 @@ class LabelSettingsWidget(QWidget):
         if name not in presets:
             QMessageBox.warning(self, "Ошибка", "Шаблон не найден")
             return
+        self._push_undo_snapshot()
         self.settings = presets[name].copy()
         self._apply_settings_to_form()
         self.refresh_preview()

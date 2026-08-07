@@ -8,11 +8,13 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from db import init_db, get_connection
+from app_paths import get_resource_path
 from gui.references_tab import ReferencesTab
 from gui.generator_tab import GeneratorTab
 from gui.history_tab import HistoryTab
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
+from PySide6.QtGui import QIcon
 
 
 class MainWindow(QMainWindow):
@@ -20,7 +22,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("generate_box_code")
         self.resize(1100, 650)
-        self.setMinimumSize(700, 450)
+        self.setMinimumSize(1050, 650)
+
+        icon_path = get_resource_path("app_icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         init_db()
         self.conn = get_connection()
@@ -50,6 +56,11 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    icon_path = get_resource_path("app_icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
