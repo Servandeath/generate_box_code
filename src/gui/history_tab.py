@@ -1,22 +1,19 @@
 ﻿"""
 Вкладка "История": все сгенерированные коды коробов с человекочитаемыми
-именами кабинета/сезона/категории, новые сверху. Раскладка: слева
-компактная таблица (тянется по ширине сплиттером), справа - счётчик,
-кнопки и место под будущий поиск/фильтры.
+именами кабинета/сезона/категории, новые сверху.
+
+Заголовки колонок ("Кабинет"/"Сезон"/"Категория") берутся из
+настраиваемых названий разделов (dimension_labels) и обновляются
+живьём через apply_dimension_labels() при переименовании во вкладке
+"Справочники".
 
 Использует QTableView + QAbstractTableModel вместо QTableWidget -
 данные хранятся как обычный питоновский список, отрисовываются только
-видимые строки (как в любом лог-вьюере), поэтому тысячи записей не
-подвешивают интерфейс.
+видимые строки, поэтому тысячи записей не подвешивают интерфейс.
 
 "Перепечатать выбранный код" - печатает УЖЕ СУЩЕСТВУЮЩИЙ код повторно
 (для случая утери/повреждения физической этикетки). Это НЕ создаёт
 новый код и не пишет в базу заново - только рендерит тот же код в PDF.
-Намеренно нет кнопки "очистить историю" в самом приложении: сброс базы
-меняет проверку уникальности задним числом и рискует привести к
-повторной печати уже использованного кода на реальном складе. Для
-разовой очистки (например перед релизом) используется ручное удаление
-файла базы вне приложения, не встроенная функция.
 """
 
 import os
@@ -27,24 +24,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db import list_history
 from label_render import make_pdf_one_per_page, load_label_settings, register_pdf_font
+from dimension_labels import load_dimension_labels
 
 from openpyxl import Workbook
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableView, QMessageBox, QFileDialog, QHeaderView, QAbstractItemView,
-    QSplitter, QScrollArea, QGroupBox,
 )
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 
 
 class HistoryTableModel(QAbstractTableModel):
-    COLUMNS = ["Код", "Кабинет", "Сезон", "Категория", "Дата создания"]
     FIELD_KEYS = ["code", "cabinet_name", "season_name", "item_name", "created_at"]
 
-    def __init__(self, rows=None, parent=None):
+    def __init__(self, rows=None, column_labels=None, parent=None):
         super().__init__(parent)
         self._rows = rows or []
+        self.columns = column_labels or ["Код", "Кабинет", "Сезон", "Категория", "Дата создания"]
+
+    def set_columns(self, column_labels: list[str]):
+        self.columns = column_labels
+        top_left = self.index(0, 0)
+        top_right = self.index(0, self.columnCount() - 1)
+        self.headerDataChanged.emit(Qt.Horizontal, 0, self.columnCount() - 1)
 
     def set_rows(self, rows):
         self.beginResetModel()
@@ -60,7 +63,7 @@ class HistoryTableModel(QAbstractTableModel):
         return len(self._rows)
 
     def columnCount(self, parent=QModelIndex()):
-        return len(self.COLUMNS)
+        return len(self.columns)
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or role != Qt.DisplayRole:
@@ -73,7 +76,7 @@ class HistoryTableModel(QAbstractTableModel):
         if role != Qt.DisplayRole:
             return None
         if orientation == Qt.Horizontal:
-            return self.COLUMNS[section]
+            return self.columns[section]
         return str(section + 1)
 
 
@@ -83,17 +86,20 @@ class HistoryTab(QWidget):
         self.conn = conn
         self._pdf_font_name = register_pdf_font()
 
+        labels = load_dimension_labels()
+        column_labels = ["Код", labels["cabinet"], labels["season"], labels["item"], "Дата создания"]
+
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
+        from PySide6.QtWidgets import QSplitter, QScrollArea, QGroupBox
         splitter = QSplitter(Qt.Horizontal)
 
-        # ---- левая колонка: таблица ----
         table_widget = QWidget()
         table_layout = QVBoxLayout(table_widget)
         table_layout.addWidget(QLabel("<b>История сгенерированных кодов</b>"))
 
-        self.model = HistoryTableModel()
+        self.model = HistoryTableModel(column_labels=column_labels)
         self.view = QTableView()
         self.view.setModel(self.model)
         self.view.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -107,7 +113,6 @@ class HistoryTab(QWidget):
         table_scroll.setWidgetResizable(True)
         table_scroll.setWidget(table_widget)
 
-        # ---- правая колонка: счётчик, кнопки, место под будущий поиск ----
         side_widget = QWidget()
         side_layout = QVBoxLayout(side_widget)
 
@@ -133,7 +138,7 @@ class HistoryTab(QWidget):
 
         future_group = QGroupBox("Поиск и фильтры (в разработке)")
         future_layout = QVBoxLayout()
-        future_layout.addWidget(QLabel("Будет добавлено позже:\nпоиск по коду, фильтр по\nкабинету/сезону/дате, сортировка."))
+        future_layout.addWidget(QLabel("Будет добавлено позже:\nпоиск по коду, фильтр по\nразделам и дате, сортировка."))
         future_group.setLayout(future_layout)
         side_layout.addWidget(future_group)
 
@@ -151,6 +156,9 @@ class HistoryTab(QWidget):
         outer_layout.addWidget(splitter)
 
         self.refresh()
+
+    def apply_dimension_labels(self, labels: dict):
+        self.model.set_columns(["Код", labels["cabinet"], labels["season"], labels["item"], "Дата создания"])
 
     def refresh(self):
         rows = list_history(self.conn)
@@ -199,7 +207,7 @@ class HistoryTab(QWidget):
             wb = Workbook()
             ws = wb.active
             ws.title = "История кодов"
-            ws.append(HistoryTableModel.COLUMNS)
+            ws.append(self.model.columns)
             for row in rows:
                 ws.append([row["code"], row["cabinet_name"], row["season_name"], row["item_name"], row["created_at"]])
             wb.save(path)

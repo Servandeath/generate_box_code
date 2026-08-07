@@ -2,6 +2,10 @@
 Переиспользуемый виджет для CRUD-редактирования одного справочника
 (cabinets / seasons / item_types). Используется трижды - по разу
 на каждый справочник, с разными table_name и code_len.
+
+Заголовок раздела можно менять живьём через set_title() - используется
+при переименовании разделов (кабинет/сезон/категория -> произвольные
+названия под клиента).
 """
 
 import os
@@ -29,7 +33,8 @@ class ReferenceTab(QWidget):
         self._row_ids = []
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"<b>{title}</b>"))
+        self.title_label = QLabel(f"<b>{title}</b>")
+        layout.addWidget(self.title_label)
 
         form = QHBoxLayout()
         self.name_input = QLineEdit()
@@ -59,6 +64,9 @@ class ReferenceTab(QWidget):
         layout.addWidget(deactivate_btn)
 
         self.refresh()
+
+    def set_title(self, title: str):
+        self.title_label.setText(f"<b>{title}</b>")
 
     def _suggest_code(self, text: str):
         try:

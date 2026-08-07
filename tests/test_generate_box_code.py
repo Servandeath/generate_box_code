@@ -4,7 +4,10 @@ import os
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from generate_box_code import generate_box_code, MIN_RANDOM_CHARS, MAX_RANDOM_CHARS, DATE_FORMATS
+from generate_box_code import (
+    generate_box_code, MIN_RANDOM_CHARS, MAX_RANDOM_CHARS, DATE_FORMATS,
+    DEFAULT_BLOCK_ORDER,
+)
 
 FIXED_DATE = date(2026, 7, 16)
 
@@ -107,19 +110,79 @@ def test_all_date_formats_produce_valid_codes():
 
 
 def test_random_part_capped_at_max_even_with_lots_of_free_budget():
-    # без даты, короткий кабинет/сезон/предмет - бюджет большой, но
-    # случайная часть НЕ должна раздуваться сверх MAX_RANDOM_CHARS
     code = generate_box_code("A", "D", "B", 1, include_date=False)
     randomseq_block = code.split("_")[-1]
-    random_part = randomseq_block[:-3]  # без 3 цифр seq
+    random_part = randomseq_block[:-3]
     assert len(random_part) == MAX_RANDOM_CHARS
-    assert len(code) < 30  # раз бюджет не использован полностью, код короче максимума
+    assert len(code) < 30
 
 
 def test_random_part_uses_available_when_less_than_max():
-    # длинные season/item - доступный бюджет меньше MAX_RANDOM_CHARS,
-    # используется столько, сколько есть (не меньше MIN_RANDOM_CHARS)
     code = generate_box_code("ALF", "SEA", "ITE", 1, gen_date=FIXED_DATE)
     randomseq_block = code.split("_")[-1]
     random_part = randomseq_block[:-3]
     assert MIN_RANDOM_CHARS <= len(random_part) < MAX_RANDOM_CHARS
+
+
+def test_default_block_order_matches_original_format():
+    code = generate_box_code("ALF", "DE", "BT", 1, gen_date=FIXED_DATE, block_order=DEFAULT_BLOCK_ORDER)
+    assert code.startswith("ALF_16_07_2026_DE_BT_")
+
+
+def test_custom_block_order_date_first():
+    code = generate_box_code(
+        "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+        block_order=("date", "cabinet", "season", "item"),
+    )
+    assert code.startswith("16_07_2026_ALF_DE_BT_")
+
+
+def test_custom_block_order_item_before_cabinet():
+    code = generate_box_code(
+        "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+        block_order=("item", "cabinet", "date", "season"),
+    )
+    assert code.startswith("BT_ALF_16_07_2026_DE_")
+
+
+def test_block_order_skips_disabled_blocks_but_keeps_relative_order():
+    code = generate_box_code(
+        "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+        include_season=False,
+        block_order=("season", "date", "cabinet", "item"),
+    )
+    # season выключен - пропускается, порядок остальных сохраняется: date, cabinet, item
+    assert code.startswith("16_07_2026_ALF_BT_")
+
+
+def test_random_seq_block_always_last_regardless_of_order():
+    code = generate_box_code(
+        "ALF", "DE", "BT", 42, gen_date=FIXED_DATE,
+        block_order=("item", "date", "season", "cabinet"),
+    )
+    assert code.endswith("042")
+    assert not code.startswith("042")
+
+
+def test_invalid_block_order_missing_key_raises():
+    with pytest.raises(ValueError):
+        generate_box_code(
+            "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+            block_order=("cabinet", "date", "season"),  # нет "item"
+        )
+
+
+def test_invalid_block_order_duplicate_key_raises():
+    with pytest.raises(ValueError):
+        generate_box_code(
+            "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+            block_order=("cabinet", "cabinet", "season", "item"),
+        )
+
+
+def test_invalid_block_order_unknown_key_raises():
+    with pytest.raises(ValueError):
+        generate_box_code(
+            "ALF", "DE", "BT", 1, gen_date=FIXED_DATE,
+            block_order=("cabinet", "date", "season", "unknown_key"),
+        )

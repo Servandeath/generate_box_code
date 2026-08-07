@@ -3,10 +3,9 @@
 настройка даты (под ней), генерация, компактная таблица кодов, экспорт
 PDF/Excel. Справа - превью и настройки этикетки (LabelSettingsWidget).
 
-Таблица кодов накапливает ВСЕ коды за сессию (не только последний
-пакет) - можно выделить любые строки (Ctrl/Shift+клик) и распечатать
-или экспортировать именно выделенное; если ничего не выделено -
-используется последний сгенерированный пакет.
+Подписи "Кабинет:"/"Сезон:"/"Категория:" берутся из настраиваемых
+названий разделов (dimension_labels) и обновляются живьём через
+apply_dimension_labels() при переименовании во вкладке "Справочники".
 """
 
 import os
@@ -19,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from db import list_active, get_next_seq, code_exists, add_box_code
 from generate_box_code import generate_box_code, DATE_FORMATS, DEFAULT_DATE_FORMAT
 from label_render import make_pdf_one_per_page, load_label_settings, register_pdf_font
+from dimension_labels import load_dimension_labels
 from gui.label_settings_widget import LabelSettingsWidget
 
 from openpyxl import Workbook
@@ -68,6 +68,8 @@ class GeneratorTab(QWidget):
         self._last_batch = []
         self._pdf_font_name = register_pdf_font()
 
+        labels = load_dimension_labels()
+
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -77,7 +79,6 @@ class GeneratorTab(QWidget):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
 
-        # -- блок 1: выбор справочников и количество --
         refs_group = QGroupBox("Генератор кодов короба")
         refs_layout = QVBoxLayout()
         refs_form = QHBoxLayout()
@@ -88,11 +89,15 @@ class GeneratorTab(QWidget):
         self.qty_spin.setRange(1, 9999)
         self.qty_spin.setValue(1)
 
-        refs_form.addWidget(QLabel("Кабинет:"))
+        self.cabinet_label_widget = QLabel(f"{labels['cabinet']}:")
+        self.season_label_widget = QLabel(f"{labels['season']}:")
+        self.item_label_widget = QLabel(f"{labels['item']}:")
+
+        refs_form.addWidget(self.cabinet_label_widget)
         refs_form.addWidget(self.cabinet_combo)
-        refs_form.addWidget(QLabel("Сезон:"))
+        refs_form.addWidget(self.season_label_widget)
         refs_form.addWidget(self.season_combo)
-        refs_form.addWidget(QLabel("Категория:"))
+        refs_form.addWidget(self.item_label_widget)
         refs_form.addWidget(self.item_combo)
         refs_form.addWidget(QLabel("Кол-во:"))
         refs_form.addWidget(self.qty_spin)
@@ -100,7 +105,6 @@ class GeneratorTab(QWidget):
         refs_group.setLayout(refs_layout)
         left_layout.addWidget(refs_group)
 
-        # -- блок 2 (ПОД блоком 1): настройка и выбор даты --
         date_group = QGroupBox("Настройка и выбор даты")
         date_layout = QVBoxLayout()
         date_form = QHBoxLayout()
@@ -141,6 +145,18 @@ class GeneratorTab(QWidget):
 
         date_group.setLayout(date_layout)
         left_layout.addWidget(date_group)
+
+        # -- блок 3: без сезона / без категории --
+        skip_group = QGroupBox("Пропуск частей кода")
+        skip_layout = QHBoxLayout()
+        self.no_season_checkbox = QCheckBox()
+        self.no_item_checkbox = QCheckBox()
+        self._update_skip_checkbox_texts(labels)
+        skip_layout.addWidget(self.no_season_checkbox)
+        skip_layout.addWidget(self.no_item_checkbox)
+        skip_layout.addStretch()
+        skip_group.setLayout(skip_layout)
+        left_layout.addWidget(skip_group)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
@@ -183,7 +199,6 @@ class GeneratorTab(QWidget):
 
         left_layout.addWidget(left_splitter)
 
-        
         # ---- правая колонка ----
         self.label_settings = LabelSettingsWidget()
 
@@ -193,14 +208,25 @@ class GeneratorTab(QWidget):
 
         main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_scroll)
-        main_splitter.setChildrenCollapsible(False)
         main_splitter.setStretchFactor(0, 1)
         main_splitter.setStretchFactor(1, 1)
+        main_splitter.setChildrenCollapsible(False)
 
         outer_layout.addWidget(main_splitter)
 
         self.refresh_lists()
         self._update_date_example()
+
+    def apply_dimension_labels(self, labels: dict):
+        """Живое обновление подписей полей при переименовании разделов."""
+        self.cabinet_label_widget.setText(f"{labels['cabinet']}:")
+        self.season_label_widget.setText(f"{labels['season']}:")
+        self.item_label_widget.setText(f"{labels['item']}:")
+        self._update_skip_checkbox_texts(labels)
+
+    def _update_skip_checkbox_texts(self, labels: dict):
+        self.no_season_checkbox.setText(f"Без «{labels['season']}»")
+        self.no_item_checkbox.setText(f"Без «{labels['item']}»")
 
     def _on_no_date_toggled(self):
         disabled = self.no_date_checkbox.isChecked()
@@ -247,6 +273,9 @@ class GeneratorTab(QWidget):
         qd = self.date_edit.date()
         gen_date = date_cls(qd.year(), qd.month(), qd.day())
 
+        include_season = not self.no_season_checkbox.isChecked()
+        include_item = not self.no_item_checkbox.isChecked()
+
         start_seq = get_next_seq(self.conn, cabinet_id)
 
         written_codes = []
@@ -260,6 +289,7 @@ class GeneratorTab(QWidget):
                     candidate = generate_box_code(
                         cabinet_code, season_code, item_code, seq,
                         gen_date=gen_date, include_date=include_date, date_format=date_format,
+                        include_season=include_season, include_item=include_item,
                     )
                 except ValueError as e:
                     QMessageBox.critical(self, "Ошибка генерации", str(e))
@@ -297,14 +327,11 @@ class GeneratorTab(QWidget):
         self.table.resizeColumnsToContents()
 
         self._last_batch = codes
-        # кнопки активны, если в таблице ЕСТЬ строки вообще (не только
-        # из последнего пакета) - можно выделить и распечатать любые
         has_rows = self.table.rowCount() > 0
         self.pdf_btn.setEnabled(has_rows)
         self.excel_btn.setEnabled(has_rows)
 
     def _get_export_codes(self) -> list[str]:
-        """Выделенные в таблице строки, если есть выделение; иначе последний пакет."""
         selected_rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         if selected_rows:
             return [self.table.item(r, 0).text() for r in selected_rows]
@@ -341,6 +368,3 @@ class GeneratorTab(QWidget):
             QMessageBox.information(self, "Готово", f"Excel сохранён ({len(codes)} шт.): {path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
-
-
-

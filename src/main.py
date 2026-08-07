@@ -44,6 +44,11 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.generator_tab)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
+        # переименование разделов (кабинет/сезон/категория) применяется
+        # живьём на остальных вкладках через этот сигнал
+        self.references_tab.labels_changed.connect(self.generator_tab.apply_dimension_labels)
+        self.references_tab.labels_changed.connect(self.history_tab.apply_dimension_labels)
+
         self.setCentralWidget(self.tabs)
 
     def _on_tab_changed(self, index: int):

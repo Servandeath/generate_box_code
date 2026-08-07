@@ -1,19 +1,19 @@
 ﻿"""
 Генерация уникального кода короба для Wildberries.
 
-Формат: CABINET_[DATE_]SEASON_ITEM_RANDOMSEQ
-Дата - опциональная часть (include_date=False убирает её из кода
-полностью, вместе с разделителем). Формат даты выбирается через
-date_format - см. DATE_FORMATS. RANDOMSEQ = случайные символы +
-порядковый номер, без разделителя.
+Формат состоит из 5 блоков:
+1-4: cabinet, date, season, item - порядок между собой НАСТРАИВАЕМЫЙ
+     через block_order (по умолчанию cabinet_date_season_item, как
+     раньше). cabinet присутствует ВСЕГДА (обязателен, с ним связан
+     суточный счётчик seq); date/season/item можно индивидуально
+     отключить (include_date/include_season/include_item), не меняя
+     их место в порядке - выключенный блок просто пропускается.
+5:   RANDOMSEQ (случайные символы + порядковый номер) - ВСЕГДА
+     последний, не участвует в переупорядочивании.
 
-Случайная часть НЕ растягивается на весь свободный бюджет длины -
-максимум MAX_RANDOM_CHARS символов (по умолчанию 5), даже если
-освобождается больше места (например при отключённой дате). Если
-доступно меньше MAX_RANDOM_CHARS, но не меньше MIN_RANDOM_CHARS -
-используется столько, сколько есть. Итоговый код при этом может
-получиться короче 30 символов - это нормально, 30 - верхний предел
-формата, а не обязательная цель.
+Формат даты выбирается через date_format - см. DATE_FORMATS.
+Случайная часть не превышает MAX_RANDOM_CHARS даже при большом
+свободном бюджете.
 
 Порядковый номер не ограничен сверху - ширина (кол-во цифр) считается
 динамически под ТЕКУЩЕЕ значение seq (минимум 3 цифры, растёт по мере
@@ -38,6 +38,9 @@ ITEM_CODE_LEN = 2
 
 RANDOM_ALPHABET = string.ascii_uppercase + string.digits
 _VALID_CHARS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+BLOCK_KEYS = ("cabinet", "date", "season", "item")
+DEFAULT_BLOCK_ORDER = ("cabinet", "date", "season", "item")
 
 _MONTH_ABBR_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -64,6 +67,15 @@ def _random_chars(n: int) -> str:
     return "".join(random.choices(RANDOM_ALPHABET, k=n))
 
 
+def _validate_block_order(block_order):
+    order = tuple(block_order)
+    if set(order) != set(BLOCK_KEYS) or len(order) != len(BLOCK_KEYS):
+        raise ValueError(
+            f"block_order должен быть перестановкой {BLOCK_KEYS} без повторов, получено {order}"
+        )
+    return order
+
+
 def generate_box_code(
     cabinet: str,
     season: str,
@@ -72,21 +84,31 @@ def generate_box_code(
     gen_date: date | None = None,
     include_date: bool = True,
     date_format: str = DEFAULT_DATE_FORMAT,
+    include_season: bool = True,
+    include_item: bool = True,
+    block_order=DEFAULT_BLOCK_ORDER,
 ) -> str:
     """
-    Собирает код короба по формату:
-    CABINET_[DATE_]SEASON_ITEM_RANDOMSEQ
+    Собирает код короба из блоков 1-4 (cabinet/date/season/item) в
+    порядке block_order, плюс всегда последний блок RANDOMSEQ.
 
-    Бросает ValueError, если seq < 1, date_format не найден в DATE_FORMATS,
-    входные коды содержат недопустимые символы, или не остаётся места
-    даже на минимальную случайную часть (MIN_RANDOM_CHARS).
+    Бросает ValueError, если seq < 1, block_order не является
+    перестановкой ('cabinet','date','season','item'), date_format
+    не найден в DATE_FORMATS, любая ВКЛЮЧЁННАЯ часть содержит
+    недопустимые символы, или не остаётся места даже на минимальную
+    случайную часть (MIN_RANDOM_CHARS).
     """
     if seq < SEQ_MIN:
         raise ValueError(f"seq должен быть >= {SEQ_MIN}, получено {seq}")
 
-    for name, value in [("cabinet", cabinet), ("season", season), ("item", item)]:
-        if not value or not _VALID_CHARS_RE.match(value):
-            raise ValueError(f"{name}='{value}' содержит недопустимые символы")
+    order = _validate_block_order(block_order)
+
+    if not cabinet or not _VALID_CHARS_RE.match(cabinet):
+        raise ValueError(f"cabinet='{cabinet}' содержит недопустимые символы")
+    if include_season and (not season or not _VALID_CHARS_RE.match(season)):
+        raise ValueError(f"season='{season}' содержит недопустимые символы")
+    if include_item and (not item or not _VALID_CHARS_RE.match(item)):
+        raise ValueError(f"item='{item}' содержит недопустимые символы")
 
     if include_date:
         if date_format not in DATE_FORMATS:
@@ -99,11 +121,16 @@ def generate_box_code(
     seq_digits = max(MIN_SEQ_DIGITS, len(str(seq)))
     seq_part = str(seq).zfill(seq_digits)
 
-    parts = [cabinet]
-    if date_part is not None:
-        parts.append(date_part)
-    parts.append(season)
-    parts.append(item)
+    segment_values = {
+        "cabinet": cabinet,
+        "date": date_part,
+        "season": season if include_season else None,
+        "item": item if include_item else None,
+    }
+
+    parts = [segment_values[key] for key in order if segment_values[key] is not None]
+    if not parts:
+        raise ValueError("Все блоки отключены - код не может состоять из одного случайного номера")
 
     fixed_len = sum(len(p) for p in parts) + len(parts)  # +1 разделитель "_" после каждой части
     fixed_len += seq_digits
@@ -112,14 +139,11 @@ def generate_box_code(
     if available_budget < MIN_RANDOM_CHARS:
         raise ValueError(
             f"Не хватает места под случайную часть: доступно {available_budget}, "
-            f"минимум {MIN_RANDOM_CHARS}. Сократите cabinet/season/item, "
+            f"минимум {MIN_RANDOM_CHARS}. Сократите блоки, "
             f"выберите более короткий формат даты, либо номер {seq} стал "
             f"слишком большим для формата."
         )
 
-    # используем не весь доступный бюджет, а минимум из (доступно, MAX_RANDOM_CHARS) -
-    # лишний освободившийся бюджет (например при отключённой дате) просто
-    # не тратится, код получается короче 30 символов
     random_len = min(available_budget, MAX_RANDOM_CHARS)
 
     code = "_".join(parts) + f"_{_random_chars(random_len)}{seq_part}"
