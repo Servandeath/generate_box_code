@@ -87,7 +87,8 @@ class ReferencesTab(QWidget):
         preset_form.addStretch()
         rename_layout.addLayout(preset_form)
 
-        rename_group.setLayout(rename_layout)
+                rename_layout.addStretch()
+rename_group.setLayout(rename_layout)
         layout.addWidget(rename_group)
 
         # ---- три колонки справочников ----
@@ -107,7 +108,7 @@ class ReferencesTab(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 1)
 
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, 1)
 
     def refresh_all(self):
         self.cabinets_tab.refresh()
@@ -173,4 +174,5 @@ class ReferencesTab(QWidget):
         if confirm == QMessageBox.Yes:
             delete_label_preset(name)
             self._reload_presets_list()
+
 

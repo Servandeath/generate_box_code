@@ -1,11 +1,14 @@
 ﻿"""
 Вкладка "Генератор": слева - выбор кабинета/сезона/категории (сверху),
-настройка даты (под ней), генерация, компактная таблица кодов, экспорт
+порядок и состав блоков кода (перетаскиваемый список), настройка даты
+(формат/значение), генерация, компактная таблица кодов, экспорт
 PDF/Excel. Справа - превью и настройки этикетки (LabelSettingsWidget).
 
-Подписи "Кабинет:"/"Сезон:"/"Категория:" берутся из настраиваемых
-названий разделов (dimension_labels) и обновляются живьём через
-apply_dimension_labels() при переименовании во вкладке "Справочники".
+"Порядок и состав кода" - список из 4 блоков (Кабинет/Дата/Блок2/Блок3),
+которые можно перетаскивать мышкой для смены порядка в итоговом коде.
+Кабинет всегда включён (обязателен - с ним связан суточный счётчик),
+у остальных есть чекбокс включения/выключения. 5-й блок (случайное +
+порядковый номер) всегда последний, не участвует в списке.
 """
 
 import os
@@ -16,7 +19,7 @@ from datetime import date as date_cls
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db import list_active, get_next_seq, code_exists, add_box_code
-from generate_box_code import generate_box_code, DATE_FORMATS, DEFAULT_DATE_FORMAT
+from generate_box_code import generate_box_code, DATE_FORMATS, DEFAULT_DATE_FORMAT, DEFAULT_BLOCK_ORDER
 from label_render import make_pdf_one_per_page, load_label_settings, register_pdf_font
 from dimension_labels import load_dimension_labels
 from gui.label_settings_widget import LabelSettingsWidget
@@ -26,8 +29,8 @@ from openpyxl import Workbook
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
-    QScrollArea, QSplitter, QHeaderView, QGroupBox, QDateEdit, QCheckBox,
-    QAbstractItemView, QFrame,
+    QScrollArea, QSplitter, QHeaderView, QGroupBox, QDateEdit,
+    QAbstractItemView, QFrame, QListWidget, QListWidgetItem,
 )
 from PySide6.QtCore import Qt, QDate
 
@@ -59,6 +62,13 @@ QCalendarWidget QMenu {
     color: white;
 }
 """
+
+BLOCK_DISPLAY_NAMES = {
+    "cabinet": None,  # берётся из dimension_labels
+    "date": "Дата",
+    "season": None,
+    "item": None,
+}
 
 
 class GeneratorTab(QWidget):
@@ -105,7 +115,24 @@ class GeneratorTab(QWidget):
         refs_group.setLayout(refs_layout)
         left_layout.addWidget(refs_group)
 
-        date_group = QGroupBox("Настройка и выбор даты")
+        # -- блок: порядок и состав кода (перетаскиваемый список) --
+        order_group = QGroupBox("Порядок и состав кода (перетащите мышкой)")
+        order_layout = QVBoxLayout()
+
+        self.block_order_list = QListWidget()
+        self.block_order_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.block_order_list.setDefaultDropAction(Qt.MoveAction)
+        self.block_order_list.setMaximumHeight(140)
+        self.block_order_list.model().rowsMoved.connect(self._update_date_example)
+
+        self._build_block_items(labels)
+
+        order_layout.addWidget(self.block_order_list)
+        order_group.setLayout(order_layout)
+        left_layout.addWidget(order_group)
+
+        # -- блок: настройка даты (формат/значение) --
+        date_group = QGroupBox("Настройка даты")
         date_layout = QVBoxLayout()
         date_form = QHBoxLayout()
 
@@ -122,14 +149,10 @@ class GeneratorTab(QWidget):
         self.date_edit.calendarWidget().setStyleSheet(CALENDAR_STYLE)
         self.date_edit.dateChanged.connect(self._update_date_example)
 
-        self.no_date_checkbox = QCheckBox("Без даты")
-        self.no_date_checkbox.stateChanged.connect(self._on_no_date_toggled)
-
         date_form.addWidget(QLabel("Формат:"))
         date_form.addWidget(self.date_format_combo)
         date_form.addWidget(QLabel("Дата:"))
         date_form.addWidget(self.date_edit)
-        date_form.addWidget(self.no_date_checkbox)
         date_layout.addLayout(date_form)
 
         separator = QFrame()
@@ -145,18 +168,6 @@ class GeneratorTab(QWidget):
 
         date_group.setLayout(date_layout)
         left_layout.addWidget(date_group)
-
-        # -- блок 3: без сезона / без категории --
-        skip_group = QGroupBox("Пропуск частей кода")
-        skip_layout = QHBoxLayout()
-        self.no_season_checkbox = QCheckBox()
-        self.no_item_checkbox = QCheckBox()
-        self._update_skip_checkbox_texts(labels)
-        skip_layout.addWidget(self.no_season_checkbox)
-        skip_layout.addWidget(self.no_item_checkbox)
-        skip_layout.addStretch()
-        skip_group.setLayout(skip_layout)
-        left_layout.addWidget(skip_group)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
@@ -217,25 +228,55 @@ class GeneratorTab(QWidget):
         self.refresh_lists()
         self._update_date_example()
 
+    def _build_block_items(self, labels: dict):
+        self.block_order_list.clear()
+        block_texts = {
+            "cabinet": labels["cabinet"],
+            "date": "Дата",
+            "season": labels["season"],
+            "item": labels["item"],
+        }
+        for key in DEFAULT_BLOCK_ORDER:
+            item = QListWidgetItem(block_texts[key])
+            item.setData(Qt.UserRole, key)
+            if key == "cabinet":
+                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+            else:
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+            self.block_order_list.addItem(item)
+
     def apply_dimension_labels(self, labels: dict):
-        """Живое обновление подписей полей при переименовании разделов."""
+        """Живое обновление подписей полей и списка блоков при переименовании разделов."""
         self.cabinet_label_widget.setText(f"{labels['cabinet']}:")
         self.season_label_widget.setText(f"{labels['season']}:")
         self.item_label_widget.setText(f"{labels['item']}:")
-        self._update_skip_checkbox_texts(labels)
 
-    def _update_skip_checkbox_texts(self, labels: dict):
-        self.no_season_checkbox.setText(f"Без «{labels['season']}»")
-        self.no_item_checkbox.setText(f"Без «{labels['item']}»")
+        block_texts = {"cabinet": labels["cabinet"], "season": labels["season"], "item": labels["item"]}
+        for i in range(self.block_order_list.count()):
+            it = self.block_order_list.item(i)
+            key = it.data(Qt.UserRole)
+            if key in block_texts:
+                it.setText(block_texts[key])
+
+    def _get_block_order_and_flags(self):
+        """Читает текущий порядок и состояния чекбоксов из block_order_list."""
+        order = []
+        include = {"date": True, "season": True, "item": True}
+        for i in range(self.block_order_list.count()):
+            it = self.block_order_list.item(i)
+            key = it.data(Qt.UserRole)
+            order.append(key)
+            if key != "cabinet":
+                include[key] = it.checkState() == Qt.Checked
+        return tuple(order), include
 
     def _on_no_date_toggled(self):
-        disabled = self.no_date_checkbox.isChecked()
-        self.date_format_combo.setEnabled(not disabled)
-        self.date_edit.setEnabled(not disabled)
         self._update_date_example()
 
-    def _update_date_example(self):
-        if self.no_date_checkbox.isChecked():
+    def _update_date_example(self, *args):
+        _, include = self._get_block_order_and_flags()
+        if not include["date"]:
             self.date_example_label.setText("Пример: дата не будет включена в код")
             return
         date_key = self.date_format_combo.currentData()
@@ -268,13 +309,14 @@ class GeneratorTab(QWidget):
         item_id, item_code = self.item_combo.currentData()
         qty = self.qty_spin.value()
 
-        include_date = not self.no_date_checkbox.isChecked()
+        block_order, include = self._get_block_order_and_flags()
+        include_date = include["date"]
+        include_season = include["season"]
+        include_item = include["item"]
+
         date_format = self.date_format_combo.currentData()
         qd = self.date_edit.date()
         gen_date = date_cls(qd.year(), qd.month(), qd.day())
-
-        include_season = not self.no_season_checkbox.isChecked()
-        include_item = not self.no_item_checkbox.isChecked()
 
         start_seq = get_next_seq(self.conn, cabinet_id)
 
@@ -290,6 +332,7 @@ class GeneratorTab(QWidget):
                         cabinet_code, season_code, item_code, seq,
                         gen_date=gen_date, include_date=include_date, date_format=date_format,
                         include_season=include_season, include_item=include_item,
+                        block_order=block_order,
                     )
                 except ValueError as e:
                     QMessageBox.critical(self, "Ошибка генерации", str(e))
