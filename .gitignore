@@ -11,3 +11,5 @@ dist/
 build/
 dist/
 *.spec
+src/label_settings.json
+src/label_presets.json
