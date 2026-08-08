@@ -1,4 +1,4 @@
-﻿"""
+"""
 Вкладка "Генератор": слева - выбор кабинета/сезона/категории (сверху),
 порядок и состав блоков кода (перетаскиваемый список), настройка даты
 (формат/значение), генерация, компактная таблица кодов, экспорт
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
     QScrollArea, QSplitter, QHeaderView, QGroupBox, QDateEdit,
-    QAbstractItemView, QFrame, QListWidget, QListWidgetItem,
+    QAbstractItemView, QFrame, QListWidget, QListWidgetItem, QGridLayout,
 )
 from PySide6.QtCore import Qt, QDate
 
@@ -89,9 +89,14 @@ class GeneratorTab(QWidget):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
 
-        refs_group = QGroupBox("Генератор кодов короба")
-        refs_layout = QVBoxLayout()
-        refs_form = QHBoxLayout()
+        # ==== верхняя зона: крупные группы (QGroupBox) в сетке ====
+        # Двухуровневая группировка: крупная рамка-группа, внутри — мелкие рамки полей.
+        top_grid = QGridLayout()
+        top_grid.setContentsMargins(4, 2, 4, 2)
+        top_grid.setHorizontalSpacing(8)
+        top_grid.setVerticalSpacing(2)
+
+        # -- поля (создаём заранее, раскладываем ниже) --
         self.cabinet_combo = QComboBox()
         self.season_combo = QComboBox()
         self.item_combo = QComboBox()
@@ -99,43 +104,39 @@ class GeneratorTab(QWidget):
         self.qty_spin.setRange(1, 9999)
         self.qty_spin.setValue(1)
 
-        self.cabinet_label_widget = QLabel(f"{labels['cabinet']}:")
-        self.season_label_widget = QLabel(f"{labels['season']}:")
-        self.item_label_widget = QLabel(f"{labels['item']}:")
+        self.cabinet_label_widget = QLabel(f"{labels['cabinet']}")
+        self.season_label_widget = QLabel(f"{labels['season']}")
+        self.item_label_widget = QLabel(f"{labels['item']}")
 
-        refs_form.addWidget(self.cabinet_label_widget)
-        refs_form.addWidget(self.cabinet_combo)
-        refs_form.addWidget(self.season_label_widget)
-        refs_form.addWidget(self.season_combo)
-        refs_form.addWidget(self.item_label_widget)
-        refs_form.addWidget(self.item_combo)
-        refs_form.addWidget(QLabel("Кол-во:"))
-        refs_form.addWidget(self.qty_spin)
-        refs_layout.addLayout(refs_form)
-        refs_group.setLayout(refs_layout)
-        left_layout.addWidget(refs_group)
+        # -- крупная группа "Справочники": внутри 3 мелкие рамки --
+        refs_group = QGroupBox("Справочники")
+        refs_inner = QHBoxLayout()
+        for lbl, combo in (
+            (self.cabinet_label_widget, self.cabinet_combo),
+            (self.season_label_widget, self.season_combo),
+            (self.item_label_widget, self.item_combo),
+        ):
+            cell = QGroupBox()
+            cell_lay = QVBoxLayout()
+            cell_lay.setContentsMargins(4, 1, 4, 1)
+            cell_lay.addWidget(lbl)
+            cell_lay.addWidget(combo)
+            cell_lay.addStretch()
+            cell.setLayout(cell_lay)
+            refs_inner.addWidget(cell)
+        refs_group.setLayout(refs_inner)
+        top_grid.addWidget(refs_group, 0, 0, 1, 3)
 
-        # -- блок: порядок и состав кода (перетаскиваемый список) --
-        order_group = QGroupBox("Порядок и состав кода (перетащите мышкой)")
-        order_layout = QVBoxLayout()
+        # -- отдельная группа "Количество" --
+        qty_group = QGroupBox("Количество")
+        qty_lay = QVBoxLayout()
+        qty_lay.setContentsMargins(4, 1, 4, 1)
+        qty_lay.addWidget(self.qty_spin)
+        qty_lay.addStretch()
+        qty_group.setLayout(qty_lay)
+        top_grid.addWidget(qty_group, 0, 3)
 
-        self.block_order_list = QListWidget()
-        self.block_order_list.setDragDropMode(QAbstractItemView.InternalMove)
-        self.block_order_list.setDefaultDropAction(Qt.MoveAction)
-        self.block_order_list.setMaximumHeight(140)
-        self.block_order_list.model().rowsMoved.connect(self._update_date_example)
-
-        self._build_block_items(labels)
-
-        order_layout.addWidget(self.block_order_list)
-        order_group.setLayout(order_layout)
-        left_layout.addWidget(order_group)
-
-        # -- блок: настройка даты (формат/значение) --
-        date_group = QGroupBox("Настройка даты")
-        date_layout = QVBoxLayout()
-        date_form = QHBoxLayout()
-
+        # -- поля даты --
         self.date_format_combo = QComboBox()
         for key in DATE_FORMATS:
             self.date_format_combo.addItem(f"{key} ({DATE_FORMAT_EXAMPLES.get(key, '?')})", key)
@@ -149,25 +150,74 @@ class GeneratorTab(QWidget):
         self.date_edit.calendarWidget().setStyleSheet(CALENDAR_STYLE)
         self.date_edit.dateChanged.connect(self._update_date_example)
 
-        date_form.addWidget(QLabel("Формат:"))
-        date_form.addWidget(self.date_format_combo)
-        date_form.addWidget(QLabel("Дата:"))
-        date_form.addWidget(self.date_edit)
-        date_layout.addLayout(date_form)
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("color: #555;")
-        date_layout.addWidget(separator)
-
         self.date_example_label = QLabel("")
+        self.date_example_label.setFixedHeight(28)
         self.date_example_label.setStyleSheet(
             "border: 1px solid #666; border-radius: 4px; padding: 4px; background-color: #2a2a2a;"
         )
-        date_layout.addWidget(self.date_example_label)
 
-        date_group.setLayout(date_layout)
-        left_layout.addWidget(date_group)
+        # -- крупная группа "Дата": Формат + Дата (в ряд) + Пример (снизу) --
+        date_group = QGroupBox("Дата")
+        date_outer = QVBoxLayout()
+        date_row = QHBoxLayout()
+
+        fmt_cell = QGroupBox()
+        fmt_lay = QVBoxLayout()
+        fmt_lay.setContentsMargins(4, 1, 4, 1)
+        fmt_lay.addWidget(QLabel("Формат"))
+        fmt_lay.addWidget(self.date_format_combo)
+        fmt_lay.addStretch()
+        fmt_cell.setLayout(fmt_lay)
+
+        dt_cell = QGroupBox()
+        dt_lay = QVBoxLayout()
+        dt_lay.setContentsMargins(4, 1, 4, 1)
+        dt_lay.addWidget(QLabel("Дата"))
+        dt_lay.addWidget(self.date_edit)
+        dt_lay.addStretch()
+        dt_cell.setLayout(dt_lay)
+
+        date_row.addWidget(fmt_cell)
+        date_row.addWidget(dt_cell)
+        date_outer.addLayout(date_row)
+        date_outer.addWidget(self.date_example_label)
+        date_group.setLayout(date_outer)
+        top_grid.addWidget(date_group, 1, 0, 1, 2)
+
+        # -- крупная группа "Порядок и состав": список (2 строки высоты) --
+        self.block_order_list = QListWidget()
+        self.block_order_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.block_order_list.setDefaultDropAction(Qt.MoveAction)
+        self.block_order_list.setFlow(QListWidget.LeftToRight)
+        self.block_order_list.setMaximumHeight(48)
+        self.block_order_list.model().rowsMoved.connect(self._update_date_example)
+        self._build_block_items(labels)
+
+        order_group = QGroupBox("Порядок и состав (перетащите)")
+        order_lay = QVBoxLayout()
+        order_lay.addWidget(self.block_order_list)
+
+        self.full_example_label = QLabel("")
+        self.full_example_label.setWordWrap(True)
+        self.full_example_label.setStyleSheet(
+            "border: 1px solid #666; border-radius: 4px; padding: 4px; background-color: #2a2a2a;"
+        )
+        order_lay.addWidget(self.full_example_label)
+        order_lay.addStretch()
+        order_group.setLayout(order_lay)
+        top_grid.addWidget(order_group, 1, 2, 1, 2)
+
+        # растяжка колонок
+        top_grid.setColumnStretch(0, 3)
+        top_grid.setColumnStretch(1, 3)
+        top_grid.setColumnStretch(2, 3)
+        top_grid.setColumnStretch(3, 2)
+
+        from PySide6.QtWidgets import QSizePolicy
+        top_container = QWidget()
+        top_container.setLayout(top_grid)
+        top_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        left_layout.addWidget(top_container)
 
         gen_btn = QPushButton("Сгенерировать и записать в БД")
         gen_btn.clicked.connect(self._generate_and_write)
@@ -225,6 +275,9 @@ class GeneratorTab(QWidget):
 
         outer_layout.addWidget(main_splitter)
 
+        self.cabinet_combo.currentIndexChanged.connect(self._update_full_example)
+        self.season_combo.currentIndexChanged.connect(self._update_full_example)
+        self.item_combo.currentIndexChanged.connect(self._update_full_example)
         self.refresh_lists()
         self._update_date_example()
 
@@ -240,7 +293,9 @@ class GeneratorTab(QWidget):
             item = QListWidgetItem(block_texts[key])
             item.setData(Qt.UserRole, key)
             if key == "cabinet":
-                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                # обязателен: чекбокс есть и отмечен, но снять его нельзя
+                item.setFlags((item.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEnabled)
+                item.setCheckState(Qt.Checked)
             else:
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked)
@@ -276,17 +331,48 @@ class GeneratorTab(QWidget):
 
     def _update_date_example(self, *args):
         _, include = self._get_block_order_and_flags()
-        if not include["date"]:
-            self.date_example_label.setText("Пример: дата не будет включена в код")
-            return
+        if include["date"]:
+            date_key = self.date_format_combo.currentData()
+            qd = self.date_edit.date()
+            py_date = date_cls(qd.year(), qd.month(), qd.day())
+            try:
+                formatted = DATE_FORMATS[date_key](py_date)
+                self.date_example_label.setText(f"Пример даты: {formatted}")
+            except Exception:
+                self.date_example_label.setText("Пример даты: -")
+        else:
+            self.date_example_label.setText("Дата не включена в код")
+        self._update_full_example()
+
+    def _update_full_example(self):
+        """Собирает структуру кода БЕЗ random-части, в текущем порядке блоков.
+        Берёт те же значения, что пойдут в generate_box_code — чтобы не разойтись."""
+        order, include = self._get_block_order_and_flags()
+
+        cab = self.cabinet_combo.currentData()
+        sea = self.season_combo.currentData()
+        itm = self.item_combo.currentData()
+        cabinet_code = cab[1] if cab else "?"
+        season_code = sea[1] if sea else "?"
+        item_code = itm[1] if itm else "?"
+
         date_key = self.date_format_combo.currentData()
         qd = self.date_edit.date()
         py_date = date_cls(qd.year(), qd.month(), qd.day())
         try:
-            formatted = DATE_FORMATS[date_key](py_date)
-            self.date_example_label.setText(f"Пример: ...{formatted}...")
+            date_str = DATE_FORMATS[date_key](py_date)
         except Exception:
-            self.date_example_label.setText("Пример: -")
+            date_str = "?"
+
+        segment_values = {
+            "cabinet": cabinet_code,
+            "date": date_str if include["date"] else None,
+            "season": season_code if include["season"] else None,
+            "item": item_code if include["item"] else None,
+        }
+        parts = [segment_values[k] for k in order if segment_values[k] is not None]
+        preview = "_".join(parts) + "_"
+        self.full_example_label.setText(f"Пример кода: {preview}")
 
     def refresh_lists(self):
         self.cabinet_combo.clear()
