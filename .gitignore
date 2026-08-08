@@ -4,13 +4,10 @@ __pycache__/
 *.db
 build/
 dist/
-*.spec
 build/
 dist/
-*.spec
 build/
 dist/
-*.spec
 src/label_settings.json
 src/label_presets.json
 src/dimension_labels.json
