@@ -41,7 +41,7 @@ class HistoryTableModel(QAbstractTableModel):
     def __init__(self, rows=None, column_labels=None, parent=None):
         super().__init__(parent)
         self._rows = rows or []
-        self.columns = column_labels or ["Код", "Кабинет", "Сезон", "Категория", "Дата создания"]
+        self.columns = column_labels or ["Код", "Категория 1", "Категория 2", "Категория 3", "Дата создания"]
 
     def set_columns(self, column_labels: list[str]):
         self.columns = column_labels

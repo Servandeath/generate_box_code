@@ -50,15 +50,15 @@ class ReferencesTab(QWidget):
         current_labels = load_dimension_labels()
 
         rename_form = QHBoxLayout()
-        rename_form.addWidget(QLabel("Кабинет:"))
+        rename_form.addWidget(QLabel("Категория 1:"))
         self.cabinet_name_edit = QLineEdit(current_labels["cabinet"])
         rename_form.addWidget(self.cabinet_name_edit)
 
-        rename_form.addWidget(QLabel("Сезон:"))
+        rename_form.addWidget(QLabel("Категория 2:"))
         self.season_name_edit = QLineEdit(current_labels["season"])
         rename_form.addWidget(self.season_name_edit)
 
-        rename_form.addWidget(QLabel("Категория:"))
+        rename_form.addWidget(QLabel("Категория 3:"))
         self.item_name_edit = QLineEdit(current_labels["item"])
         rename_form.addWidget(self.item_name_edit)
 
@@ -117,9 +117,9 @@ class ReferencesTab(QWidget):
 
     def _current_labels_from_form(self) -> dict:
         return {
-            "cabinet": self.cabinet_name_edit.text().strip() or "Кабинет",
-            "season": self.season_name_edit.text().strip() or "Сезон",
-            "item": self.item_name_edit.text().strip() or "Категория",
+            "cabinet": self.cabinet_name_edit.text().strip() or "Категория 1",
+            "season": self.season_name_edit.text().strip() or "Категория 2",
+            "item": self.item_name_edit.text().strip() or "Категория 3",
         }
 
     def _apply_labels(self, labels: dict):
