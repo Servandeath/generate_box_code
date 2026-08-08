@@ -87,8 +87,8 @@ class ReferencesTab(QWidget):
         preset_form.addStretch()
         rename_layout.addLayout(preset_form)
 
-                rename_layout.addStretch()
-rename_group.setLayout(rename_layout)
+        rename_layout.addStretch()
+        rename_group.setLayout(rename_layout)
         layout.addWidget(rename_group)
 
         # ---- три колонки справочников ----
