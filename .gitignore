@@ -13,3 +13,5 @@ dist/
 *.spec
 src/label_settings.json
 src/label_presets.json
+src/dimension_labels.json
+src/dimension_label_presets.json
