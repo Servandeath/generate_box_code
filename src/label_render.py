@@ -55,15 +55,24 @@ DEFAULT_LABEL_SETTINGS = {
     "barcode_y": 16,
     "barcode_h": 18,
 
-    "code_y": 4,
+"code_y": 4,
     "code_font_size": 9,
     "seq_font_size": 18,
     "seq_digits": 3,
     "min_font_size": 4,
 
     "show_grid": 1,
-}
 
+    # --- QR ---
+    "qr_size_mm": 22,
+    "qr_x": 5,
+    "qr_y": 10,
+    "qr_show_code": 1,
+    "qr_code_y": 4,
+    "qr_code_font_size": 7,
+
+    "label_type": "barcode",
+}
 
 def find_font_path() -> str | None:
     for path in FONT_CANDIDATES:
@@ -194,7 +203,47 @@ def draw_barcode_pdf(c: canvas.Canvas, code: str, settings: dict):
 
     img = _render_barcode_bars_pil(code, w_px, h_px)
     c.drawImage(ImageReader(img), margin, y, width=w_mm * mm, height=h_mm * mm)
+def draw_qr_pdf(c: canvas.Canvas, qr_content: str, settings: dict):
+    """
+    Рисует QR-код с содержимым qr_content в PDF-канвас.
+    Позиция (qr_x, qr_y от нижнего-левого угла) и размер (qr_size_mm) —
+    из настроек. Уровень коррекции ошибок M (баланс читаемости и
+    плотности). По тому же принципу, что draw_barcode_pdf — прямо в
+    канвас, чтобы превью (снимок PDF) совпало с печатью.
+    """
+    from reportlab.graphics.barcode.qr import QrCodeWidget
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics import renderPDF
 
+    size_mm = float(settings.get("qr_size_mm", 22))
+    x = float(settings.get("qr_x", 5)) * mm
+    y = float(settings.get("qr_y", 10)) * mm
+
+    qr = QrCodeWidget(qr_content)
+    qr.barLevel = "M"
+    bounds = qr.getBounds()
+    qr_w = bounds[2] - bounds[0]
+    qr_h = bounds[3] - bounds[1]
+
+    d = Drawing(
+        size_mm * mm, size_mm * mm,
+        transform=[size_mm * mm / qr_w, 0, 0, size_mm * mm / qr_h, 0, 0],
+    )
+    d.add(qr)
+    renderPDF.draw(d, c, x, y)
+def draw_qr_code_label(c: canvas.Canvas, code: str, settings: dict, font_name: str):
+    """Подпись сырого кода под QR (если включена галочка qr_show_code).
+    Размещается по qr_code_y, шрифтом qr_code_font_size, с автоподгонкой
+    под ширину этикетки."""
+    available_width = (float(settings["label_w_mm"]) - 2 * float(settings["margin_mm"])) * mm
+    fs = int(settings.get("qr_code_font_size", 7))
+    min_fs = int(settings.get("min_font_size", 4))
+    while fs > min_fs and pdfmetrics.stringWidth(code, font_name, fs) > available_width:
+        fs -= 1
+    x = float(settings["margin_mm"]) * mm
+    y = float(settings.get("qr_code_y", 4)) * mm
+    c.setFont(font_name, fs)
+    c.drawString(x, y, code)
 
 def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
     code_fs, seq_fs, prefix, seq_part = _fit_font_sizes(code, settings, font_name)
@@ -211,12 +260,25 @@ def draw_code_text(c: canvas.Canvas, code: str, settings: dict, font_name: str):
         c.drawString(x + prefix_width, y, seq_part)
 
 
-def draw_label(c: canvas.Canvas, code: str, settings: dict, font_name: str):
-    draw_barcode_pdf(c, code, settings)
-    draw_code_text(c, code, settings, font_name)
+def draw_label(c: canvas.Canvas, code: str, settings: dict, font_name: str, qr_content=None):
+    """Рисует этикетку. Тип определяется settings['label_type']:
+      'barcode' (по умолчанию) — Code128 + текст кода;
+      'qr'                      — QR + опциональная подпись кода снизу.
+    qr_content — готовая строка содержимого QR (собирается в GUI).
+    При label_type='qr' без qr_content подставляется сам код (запасной путь).
+    """
+    label_type = settings.get("label_type", "barcode")
+    if label_type == "qr":
+        content = qr_content if qr_content is not None else code
+        draw_qr_pdf(c, content, settings)
+        if int(settings.get("qr_show_code", 1)):
+            draw_qr_code_label(c, code, settings, font_name)
+    else:
+        draw_barcode_pdf(c, code, settings)
+        draw_code_text(c, code, settings, font_name)
 
 
-def make_pdf_one_per_page(codes: list[str], out_path, settings: dict, font_name: str):
+def make_pdf_one_per_page(codes, out_path, settings: dict, font_name: str, qr_contents=None):
     w = float(settings["label_w_mm"]) * mm
     h = float(settings["label_h_mm"]) * mm
 
@@ -224,8 +286,9 @@ def make_pdf_one_per_page(codes: list[str], out_path, settings: dict, font_name:
     target = str(out_path) if is_path else out_path
 
     c = canvas.Canvas(target, pagesize=(w, h))
-    for code in codes:
-        draw_label(c, code, settings, font_name)
+    for i, code in enumerate(codes):
+        qc = qr_contents[i] if qr_contents is not None and i < len(qr_contents) else None
+        draw_label(c, code, settings, font_name, qr_content=qc)
         c.showPage()
     c.save()
 
