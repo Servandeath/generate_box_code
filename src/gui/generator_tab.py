@@ -47,21 +47,6 @@ DATE_FORMAT_EXAMPLES = {
     "DMonYY": "1Jan26",
 }
 
-CALENDAR_STYLE = """
-QCalendarWidget QToolButton {
-    color: white;
-    background-color: #3a3a3a;
-    icon-size: 18px, 18px;
-    border-radius: 3px;
-}
-QCalendarWidget QToolButton:hover {
-    background-color: #505050;
-}
-QCalendarWidget QMenu {
-    background-color: #3a3a3a;
-    color: white;
-}
-"""
 
 BLOCK_DISPLAY_NAMES = {
     "cabinet": None,  # берётся из dimension_labels
@@ -147,14 +132,12 @@ class GeneratorTab(QWidget):
 
         self.date_edit = QDateEdit(QDate.currentDate())
         self.date_edit.setCalendarPopup(True)
-        self.date_edit.calendarWidget().setStyleSheet(CALENDAR_STYLE)
         self.date_edit.dateChanged.connect(self._update_date_example)
 
         self.date_example_label = QLabel("")
         self.date_example_label.setFixedHeight(28)
-        self.date_example_label.setStyleSheet(
-            "border: 1px solid #666; border-radius: 4px; padding: 4px; background-color: #2a2a2a;"
-        )
+        self.date_example_label.setFrameShape(QFrame.StyledPanel)
+        self.date_example_label.setContentsMargins(4, 0, 4, 0)
 
         # -- крупная группа "Дата": Формат + Дата (в ряд) + Пример (снизу) --
         date_group = QGroupBox("Дата")
@@ -199,9 +182,9 @@ class GeneratorTab(QWidget):
 
         self.full_example_label = QLabel("")
         self.full_example_label.setWordWrap(True)
-        self.full_example_label.setStyleSheet(
-            "border: 1px solid #666; border-radius: 4px; padding: 4px; background-color: #2a2a2a;"
-        )
+        self.full_example_label.setFrameShape(QFrame.StyledPanel)
+        self.full_example_label.setContentsMargins(4, 0, 4, 0)
+        
         order_lay.addWidget(self.full_example_label)
         order_lay.addStretch()
         order_group.setLayout(order_lay)

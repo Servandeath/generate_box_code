@@ -12,7 +12,8 @@ from app_paths import get_resource_path
 from gui.references_tab import ReferencesTab
 from gui.generator_tab import GeneratorTab
 from gui.history_tab import HistoryTab
-
+from gui.settings_tab import SettingsTab
+from theme import apply_theme, load_theme_mode
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 from PySide6.QtGui import QIcon
 
@@ -37,11 +38,13 @@ class MainWindow(QMainWindow):
         self.references_tab = ReferencesTab(self.conn)
         self.history_tab = HistoryTab(self.conn)
 
+        self.settings_tab = SettingsTab()
         self.tabs.addTab(self.generator_tab, "Генератор")
         self.tabs.addTab(self.history_tab, "История")
         self.tabs.addTab(self.references_tab, "Справочники")
-
+        self.tabs.addTab(self.settings_tab, "Настройки")
         self.tabs.setCurrentWidget(self.generator_tab)
+        self.settings_tab.theme_changed.connect(self._apply_theme_live)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # переименование разделов (кабинет/сезон/категория) применяется
@@ -58,10 +61,15 @@ class MainWindow(QMainWindow):
         elif widget is self.history_tab:
             self.history_tab.refresh()
 
+    def _apply_theme_live(self, mode: str):
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, mode)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-
+    apply_theme(app, load_theme_mode())
     icon_path = get_resource_path("app_icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
