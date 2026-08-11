@@ -97,6 +97,20 @@ class LabelSettingsWidget(QWidget):
         test_row.addWidget(self.test_code_input)
         layout.addLayout(test_row)
 
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("Тип этикетки:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItem("Штрихкод (Code128)", "barcode")
+        self.type_combo.addItem("QR-код", "qr")
+        current_type = self.settings.get("label_type", "barcode")
+        idx = self.type_combo.findData(current_type)
+        if idx >= 0:
+            self.type_combo.setCurrentIndex(idx)
+        self.type_combo.currentIndexChanged.connect(self._on_type_changed)
+        type_row.addWidget(self.type_combo)
+        type_row.addStretch()
+        layout.addLayout(type_row)
+
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("background-color: #eeeeee; border: 1px solid #999;")
@@ -193,6 +207,11 @@ class LabelSettingsWidget(QWidget):
         self.grid_checkbox.blockSignals(True)
         self.grid_checkbox.setChecked(bool(self.settings.get("show_grid", 1)))
         self.grid_checkbox.blockSignals(False)
+
+    def _on_type_changed(self):
+        self._push_undo_snapshot()
+        self.settings["label_type"] = self.type_combo.currentData()
+        self.refresh_preview()
 
     def refresh_preview(self):
         code = self.test_code_input.text().strip() or TEST_CODE_DEFAULT

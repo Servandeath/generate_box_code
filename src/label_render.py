@@ -307,7 +307,11 @@ def render_preview_image(code: str, settings: dict, font_name: str, px_per_mm: i
     from PIL import Image, ImageDraw, ImageFont
 
     buf = io.BytesIO()
-    make_pdf_one_per_page([code], buf, settings, font_name)
+    qr_contents = None
+    if settings.get("label_type") == "qr":
+        # для превью QR: если готового содержимого нет, показываем сам код
+        qr_contents = [code]
+    make_pdf_one_per_page([code], buf, settings, font_name, qr_contents=qr_contents)
     buf.seek(0)
 
     dpi = px_per_mm * 25.4
